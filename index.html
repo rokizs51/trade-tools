@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Export Cost Calculator</title>
+    <link rel="stylesheet" href="./tokens.css" />
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">Export Cost Calculator</p>
+          <h1 id="page-title">Costings</h1>
+        </div>
+        <div class="title-actions">
+          <nav class="view-switch" aria-label="Main views">
+            <button id="show-costings" class="view-button is-active" type="button">Costings</button>
+            <button id="show-archived" class="view-button" type="button">Archived</button>
+          </nav>
+          <button id="new-costing" class="text-button" type="button">New costing</button>
+        </div>
+      </header>
+
+      <section class="editor" aria-labelledby="editor-title" hidden>
+        <div class="title-row">
+          <div>
+            <p id="editor-mode" class="eyebrow">New costing</p>
+            <h2 id="editor-title">Cost a shipment</h2>
+          </div>
+          <div class="title-actions">
+            <button id="back-to-list" class="text-button secondary-button" type="button">Back to list</button>
+            <button id="save-costing" class="text-button" type="button">Save</button>
+          </div>
+        </div>
+
+        <form id="costing-form" class="costing-form">
+          <section class="panel" aria-labelledby="shipment-title">
+            <h2 id="shipment-title">Shipment</h2>
+            <div class="field-grid">
+              <label>
+                <span>Costing name</span>
+                <input id="costing-name" name="costing-name" type="text" placeholder="Coconut UAE Sep" autocomplete="off" />
+              </label>
+              <label>
+                <span>Product</span>
+                <input id="product" name="product" type="text" placeholder="Semi-Husked Coconut" autocomplete="off" />
+              </label>
+              <label>
+                <span>Quantity</span>
+                <div class="input-suffix">
+                  <input id="quantity" name="quantity" type="number" min="0" step="0.01" placeholder="25000" />
+                  <span>kg</span>
+                </div>
+              </label>
+              <label>
+                <span>Incoterm</span>
+                <select id="incoterm" name="incoterm">
+                  <option value="FOB">FOB</option>
+                  <option value="CFR">CFR</option>
+                  <option value="CIF" selected>CIF</option>
+                </select>
+              </label>
+              <label>
+                <span>USD/IDR</span>
+                <input id="fx" name="fx" type="number" min="0" step="0.01" placeholder="16500" />
+              </label>
+            </div>
+          </section>
+
+          <section class="panel" aria-labelledby="costs-title">
+            <div class="panel-heading">
+              <h2 id="costs-title">Costs</h2>
+              <button id="add-cost" class="text-button" type="button">Add cost</button>
+            </div>
+            <div class="cost-table" id="cost-rows"></div>
+          </section>
+
+          <section class="panel" aria-labelledby="pricing-title">
+            <h2 id="pricing-title">Pricing</h2>
+            <fieldset class="pricing-modes" aria-label="Pricing mode">
+              <label>
+                <input type="radio" name="pricing-mode" value="MARGIN" checked />
+                <span>Margin</span>
+              </label>
+              <label>
+                <input type="radio" name="pricing-mode" value="MARKUP" />
+                <span>Markup</span>
+              </label>
+              <label>
+                <input type="radio" name="pricing-mode" value="BUYER_OFFER" />
+                <span>Buyer offer</span>
+              </label>
+            </fieldset>
+
+            <div class="pricing-inputs">
+              <div class="pricing-card" data-pricing-input="MARGIN">
+                <h3>Target margin</h3>
+                <label>
+                  <span>Margin</span>
+                  <div class="input-suffix">
+                    <input id="target-margin" name="target-margin" type="number" min="0" max="99.99" step="0.01" placeholder="20" />
+                    <span>%</span>
+                  </div>
+                </label>
+              </div>
+              <div class="pricing-card" data-pricing-input="MARKUP" hidden>
+                <h3>Target markup</h3>
+                <label>
+                  <span>Markup</span>
+                  <div class="input-suffix">
+                    <input id="target-markup" name="target-markup" type="number" min="0" step="0.01" placeholder="20" />
+                    <span>%</span>
+                  </div>
+                </label>
+              </div>
+              <div class="pricing-card" data-pricing-input="BUYER_OFFER" hidden>
+                <h3>Buyer offer</h3>
+                <label>
+                  <span>Offer price</span>
+                  <div class="input-suffix">
+                    <input id="buyer-offer" name="buyer-offer" type="number" min="0" step="0.001" placeholder="0.630" />
+                    <span>USD/kg</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </section>
+        </form>
+      </section>
+
+      <aside class="results" aria-labelledby="results-title" hidden>
+        <div>
+          <p class="eyebrow">Live result</p>
+          <h2 id="results-title">Ready to quote</h2>
+          <p id="product-summary" class="summary-text">Start a costing to see live results.</p>
+        </div>
+
+        <div class="primary-result">
+          <span id="primary-result-label">Suggested price</span>
+          <strong id="suggested-price">$0.00/kg</strong>
+        </div>
+
+        <dl class="result-list">
+          <div data-result-stage="FOB">
+            <dt>FOB</dt>
+            <dd id="fob">$0.00/kg</dd>
+          </div>
+          <div data-result-stage="CFR">
+            <dt>CFR</dt>
+            <dd id="cfr">$0.00/kg</dd>
+          </div>
+          <div data-result-stage="CIF">
+            <dt>CIF</dt>
+            <dd id="cif">$0.00/kg</dd>
+          </div>
+          <div>
+            <dt>Break-even</dt>
+            <dd id="break-even">$0.00/kg</dd>
+          </div>
+          <div>
+            <dt>Profit</dt>
+            <dd id="profit">$0</dd>
+          </div>
+          <div>
+            <dt>Revenue</dt>
+            <dd id="revenue">$0</dd>
+          </div>
+          <div>
+            <dt>Margin</dt>
+            <dd id="margin">0%</dd>
+          </div>
+          <div>
+            <dt>Markup</dt>
+            <dd id="markup">0%</dd>
+          </div>
+        </dl>
+
+        <div id="warnings" class="warnings" role="status" aria-live="polite"></div>
+        <p id="error-message" class="error-message" role="status" aria-live="polite"></p>
+        <p id="save-status" class="save-status" role="status" aria-live="polite"></p>
+      </aside>
+
+      <section id="history-section" class="history-section" aria-labelledby="history-title">
+        <div class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Saved costings</p>
+              <h2 id="history-title">Active costings</h2>
+            </div>
+            <button id="history-new-costing" class="text-button" type="button">New costing</button>
+          </div>
+
+          <div class="history-table-wrap">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>Costing</th>
+                  <th>Product</th>
+                  <th>Incoterm</th>
+                  <th>Break-even</th>
+                  <th>Sell price</th>
+                  <th>Margin</th>
+                  <th>Updated</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="history-rows"></tbody>
+            </table>
+          </div>
+
+          <p id="history-empty" class="empty-state">No saved costings yet.</p>
+        </div>
+      </section>
+
+      <section id="archive-section" class="history-section" aria-labelledby="archive-title" hidden>
+        <div class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Archived costings</p>
+              <h2 id="archive-title">Archived data</h2>
+            </div>
+          </div>
+
+          <div class="history-table-wrap">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>Costing</th>
+                  <th>Product</th>
+                  <th>Incoterm</th>
+                  <th>Break-even</th>
+                  <th>Sell price</th>
+                  <th>Margin</th>
+                  <th>Updated</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="archive-rows"></tbody>
+            </table>
+          </div>
+
+          <p id="archive-empty" class="empty-state">No archived costings.</p>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./dist/app.js"></script>
+  </body>
+</html>

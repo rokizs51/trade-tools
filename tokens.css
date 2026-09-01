@@ -1,0 +1,38 @@
+/* Hallmark · tokens · tool surface · anchor hue: teal */
+:root {
+  --color-page: oklch(98% 0.006 95);
+  --color-surface: oklch(100% 0 0);
+  --color-surface-muted: oklch(96% 0.008 95);
+  --color-border: oklch(86% 0.012 92);
+  --color-border-strong: oklch(70% 0.02 94);
+  --color-text: oklch(23% 0.02 78);
+  --color-text-muted: oklch(48% 0.025 78);
+  --color-accent: oklch(49% 0.11 186);
+  --color-accent-strong: oklch(37% 0.095 188);
+  --color-accent-soft: oklch(92% 0.045 185);
+  --color-danger: oklch(52% 0.18 28);
+  --color-danger-soft: oklch(95% 0.035 28);
+  --font-body: Arial, Helvetica, sans-serif;
+  --font-display: Georgia, "Times New Roman", serif;
+  --space-2xs: 4px;
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-md: 1.125rem;
+  --text-lg: 1.375rem;
+  --text-xl: 2rem;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur-normal: 180ms;
+  --rule-thin: 1px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+}
