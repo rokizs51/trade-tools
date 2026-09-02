@@ -3,7 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Export Cost Calculator</title>
+    <title>Trade Tools</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "./node_modules/three/build/three.module.js",
+          "three/addons/": "./node_modules/three/examples/jsm/"
+        }
+      }
+    </script>
     <link rel="stylesheet" href="./tokens.css" />
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
@@ -11,17 +19,22 @@
     <main class="shell">
       <header class="app-header">
         <div>
-          <p class="eyebrow">Export Cost Calculator</p>
+          <p class="eyebrow">Trade Tools</p>
           <h1 id="page-title">Costings</h1>
         </div>
         <div class="title-actions">
-          <nav class="view-switch" aria-label="Main views">
-            <button id="show-costings" class="view-button is-active" type="button">Costings</button>
-            <button id="show-archived" class="view-button" type="button">Archived</button>
+          <nav class="tool-switch" aria-label="Tools">
+            <button id="show-costing-tool" class="view-button is-active" type="button">Costing calculator</button>
+            <button id="show-load-tool" class="view-button" type="button">Load calculator</button>
           </nav>
-          <button id="new-costing" class="text-button" type="button">New costing</button>
         </div>
       </header>
+
+      <nav class="workspace-nav" aria-label="Workspace views">
+        <button id="show-calculator" class="view-button is-active" type="button">Calculator</button>
+        <button id="show-saved-plans" class="view-button" type="button">Saved Plans</button>
+        <button id="show-archived-plans" class="view-button" type="button">Archived</button>
+      </nav>
 
       <section class="editor" aria-labelledby="editor-title" hidden>
         <div class="title-row">
@@ -30,7 +43,7 @@
             <h2 id="editor-title">Cost a shipment</h2>
           </div>
           <div class="title-actions">
-            <button id="back-to-list" class="text-button secondary-button" type="button">Back to list</button>
+            <button id="back-to-list" class="text-button secondary-button" type="button">Saved plans</button>
             <button id="save-costing" class="text-button" type="button">Save</button>
           </div>
         </div>
@@ -242,6 +255,266 @@
           </div>
 
           <p id="archive-empty" class="empty-state">No archived costings.</p>
+        </div>
+      </section>
+
+      <section id="load-section" class="load-section" aria-labelledby="load-title" hidden>
+        <div class="panel load-intro-panel">
+          <div>
+            <p class="eyebrow">Load calculator</p>
+            <h2 id="load-title">Plan a container load</h2>
+            <p class="summary-text">Enter package size, carton weight, and container choice to find how many cartons and units can ship.</p>
+          </div>
+          <div class="title-actions">
+            <button id="new-load-plan" class="text-button secondary-button" type="button">New plan</button>
+            <button id="save-load-plan" class="text-button" type="button" disabled>Save plan</button>
+          </div>
+          <p id="load-save-status" class="save-status" role="status" aria-live="polite"></p>
+        </div>
+
+        <div class="load-calculator-grid">
+          <form id="load-form" class="load-form">
+            <section class="panel" aria-labelledby="load-cargo-title">
+            <h2 id="load-cargo-title">Cargo</h2>
+            <div class="field-grid">
+              <label>
+                <span>Plan name</span>
+                <input id="load-plan-name" type="text" placeholder="Coconut 40HC Sep" autocomplete="off" />
+              </label>
+              <label>
+                <span>Product</span>
+                <input id="load-product" type="text" placeholder="Coconut Briquette" autocomplete="off" />
+              </label>
+              <label>
+                <span>Dimension unit</span>
+                <select id="load-dimension-unit">
+                  <option value="CM" selected>cm</option>
+                  <option value="MM">mm</option>
+                  <option value="IN">inch</option>
+                </select>
+              </label>
+              <label>
+                <span>Length</span>
+                <input id="load-length" type="number" min="0" step="0.01" placeholder="60" data-load-field="dimension" />
+              </label>
+              <label>
+                <span>Width</span>
+                <input id="load-width" type="number" min="0" step="0.01" placeholder="40" data-load-field="dimension" />
+              </label>
+              <label>
+                <span>Height</span>
+                <input id="load-height" type="number" min="0" step="0.01" placeholder="30" data-load-field="dimension" />
+              </label>
+              <label>
+                <span>Gross weight</span>
+                <div class="input-suffix">
+                  <input id="load-weight" type="number" min="0" step="0.01" placeholder="20" data-load-field="weight" />
+                  <select id="load-weight-unit" aria-label="Weight unit">
+                    <option value="KG" selected>kg</option>
+                    <option value="LB">lb</option>
+                  </select>
+                </div>
+              </label>
+              <label>
+                <span>Units per carton</span>
+                <input id="load-units" type="number" min="1" step="1" placeholder="12" data-load-field="units" />
+              </label>
+            </div>
+          </section>
+
+            <section class="panel" aria-labelledby="load-container-title">
+              <h2 id="load-container-title">Container</h2>
+              <div class="field-grid">
+                <label>
+                  <span>Container type</span>
+                  <select id="load-container" data-load-field="container"></select>
+                </label>
+                <label>
+                  <span>Loading mode</span>
+                  <select id="load-mode">
+                    <option value="FLOOR_LOADED" selected>Floor loaded</option>
+                    <option disabled>Palletized - coming later</option>
+                  </select>
+                </label>
+              </div>
+              <div class="load-actions">
+                <button id="calculate-load" class="text-button" type="submit">Calculate load</button>
+              </div>
+            </section>
+          </form>
+
+          <section class="panel load-results-panel" aria-labelledby="load-result-title">
+            <h2 id="load-result-title">Result</h2>
+            <p id="load-summary" class="summary-text">Enter cargo details and calculate a container load.</p>
+
+            <div class="primary-result">
+              <span>Cartons loaded</span>
+              <strong id="load-cartons">-</strong>
+            </div>
+
+            <dl class="result-list load-result-list">
+              <div>
+                <dt>Total units</dt>
+                <dd id="load-total-units">-</dd>
+              </div>
+              <div>
+                <dt>Cargo weight</dt>
+                <dd id="load-cargo-weight">-</dd>
+              </div>
+              <div>
+                <dt>Cargo CBM</dt>
+                <dd id="load-cargo-cbm">-</dd>
+              </div>
+              <div>
+                <dt>Volume utilization</dt>
+                <dd id="load-volume-utilization">-</dd>
+              </div>
+              <div>
+                <dt>Payload utilization</dt>
+                <dd id="load-payload-utilization">-</dd>
+              </div>
+              <div>
+                <dt>Limiting factor</dt>
+                <dd id="load-limiting-factor">-</dd>
+              </div>
+              <div>
+                <dt>Best orientation</dt>
+                <dd id="load-orientation">-</dd>
+              </div>
+              <div>
+                <dt>Loading grid</dt>
+                <dd id="load-grid">-</dd>
+              </div>
+            </dl>
+
+            <p id="load-error-message" class="error-message" role="status" aria-live="polite"></p>
+            <div class="load-result-actions">
+              <button id="create-costing-from-load" class="text-button" type="button" disabled>Use in costing</button>
+            </div>
+          </section>
+
+          <section class="panel load-comparison-panel" aria-labelledby="load-comparison-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Container options</p>
+                <h2 id="load-comparison-title">Comparison</h2>
+              </div>
+            </div>
+            <div class="history-table-wrap">
+              <table class="history-table load-comparison-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Container</th>
+                    <th scope="col" class="numeric">Cartons</th>
+                    <th scope="col" class="numeric">Units</th>
+                    <th scope="col" class="numeric">Cargo weight</th>
+                    <th scope="col" class="numeric">CBM</th>
+                    <th scope="col" class="numeric">Volume</th>
+                    <th scope="col" class="numeric">Payload</th>
+                    <th scope="col">Limit</th>
+                  </tr>
+                </thead>
+                <tbody id="load-comparison-rows"></tbody>
+              </table>
+            </div>
+            <p id="load-comparison-empty" class="empty-state">Calculate a load to compare container options.</p>
+          </section>
+
+          <section class="panel load-viewer-panel" aria-labelledby="load-viewer-title">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">3D load plan</p>
+                <h2 id="load-viewer-title">Container view</h2>
+              </div>
+              <button id="reset-load-camera" class="text-button secondary-button" type="button">Reset camera</button>
+            </div>
+            <div class="viewer-toolbar" aria-label="3D viewer controls">
+              <label>
+                <span>Layer</span>
+                <select id="load-layer-filter" disabled>
+                  <option value="ALL">All layers</option>
+                </select>
+              </label>
+              <label>
+                <span>Container</span>
+                <select id="load-container-mode">
+                  <option value="TRANSPARENT" selected>Transparent</option>
+                  <option value="WIREFRAME">Wireframe</option>
+                  <option value="SOLID">Solid</option>
+                </select>
+              </label>
+              <div class="camera-presets" aria-label="Camera presets">
+                <button class="table-button" type="button" data-camera-preset="PERSPECTIVE">Perspective</button>
+                <button class="table-button" type="button" data-camera-preset="FRONT">Front</button>
+                <button class="table-button" type="button" data-camera-preset="BACK">Back</button>
+                <button class="table-button" type="button" data-camera-preset="LEFT">Left</button>
+                <button class="table-button" type="button" data-camera-preset="RIGHT">Right</button>
+                <button class="table-button" type="button" data-camera-preset="TOP">Top</button>
+              </div>
+            </div>
+            <div id="load-viewer" class="load-viewer" role="img" aria-label="3D container load preview"></div>
+            <p id="load-viewer-status" class="viewer-status" role="status" aria-live="polite"></p>
+          </section>
+
+        </div>
+      </section>
+
+      <section id="load-saved-section" class="history-section" aria-labelledby="load-plans-title" hidden>
+        <div class="panel load-plans-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Saved load plans</p>
+              <h2 id="load-plans-title">Reusable plans</h2>
+            </div>
+            <button id="saved-new-load-plan" class="text-button" type="button">New load plan</button>
+          </div>
+          <div class="history-table-wrap">
+            <table class="history-table load-plans-table">
+              <thead>
+                <tr>
+                  <th scope="col">Plan</th>
+                  <th scope="col">Product</th>
+                  <th scope="col">Container</th>
+                  <th scope="col" class="numeric">Cartons</th>
+                  <th scope="col" class="numeric">Units</th>
+                  <th scope="col">Updated</th>
+                  <th scope="col">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="load-plan-rows"></tbody>
+            </table>
+          </div>
+          <p id="load-plans-empty" class="empty-state">No saved load plans yet.</p>
+          <p id="load-plans-status" class="save-status" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section id="load-archive-section" class="history-section" aria-labelledby="load-archive-title" hidden>
+        <div class="panel load-plans-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Archived load plans</p>
+              <h2 id="load-archive-title">Archived plans</h2>
+            </div>
+          </div>
+          <div class="history-table-wrap">
+            <table class="history-table load-plans-table">
+              <thead>
+                <tr>
+                  <th scope="col">Plan</th>
+                  <th scope="col">Product</th>
+                  <th scope="col">Container</th>
+                  <th scope="col" class="numeric">Cartons</th>
+                  <th scope="col" class="numeric">Units</th>
+                  <th scope="col">Updated</th>
+                  <th scope="col">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="load-archive-rows"></tbody>
+            </table>
+          </div>
+          <p id="load-archive-empty" class="empty-state">No archived load plans.</p>
+          <p id="load-archive-status" class="save-status" role="status" aria-live="polite"></p>
         </div>
       </section>
     </main>

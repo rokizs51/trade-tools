@@ -3,10 +3,13 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { extname, join, normalize, resolve } from "node:path";
 import { createSqliteCostingRepository } from "./sqliteCostingRepository.mjs";
+import { createSqliteLoadPlanRepository } from "./sqliteLoadPlanRepository.mjs";
 
 const root = process.cwd();
 const port = Number(process.env.PORT ?? 4173);
-const repository = createSqliteCostingRepository(join(root, "data", "costings.sqlite"));
+const databasePath = join(root, "data", "costings.sqlite");
+const repository = createSqliteCostingRepository(databasePath);
+const loadPlanRepository = createSqliteLoadPlanRepository(databasePath);
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -39,7 +42,7 @@ const server = createServer(async (request, response) => {
 
 server.listen(port, () => {
   console.log(`Export Cost Calculator: http://localhost:${port}`);
-  console.log(`SQLite database: ${join(root, "data", "costings.sqlite")}`);
+  console.log(`SQLite database: ${databasePath}`);
 });
 
 function sendJson(response, statusCode, body) {
@@ -54,8 +57,15 @@ async function handleApiRequest(request, response, url) {
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/api/load-plans") {
+      sendJson(response, 200, loadPlanRepository.list());
+      return;
+    }
+
     const costingMatch = url.pathname.match(/^\/api\/costings\/([^/]+)$/);
     const archiveMatch = url.pathname.match(/^\/api\/costings\/([^/]+)\/archive$/);
+    const loadPlanMatch = url.pathname.match(/^\/api\/load-plans\/([^/]+)$/);
+    const loadPlanArchiveMatch = url.pathname.match(/^\/api\/load-plans\/([^/]+)\/archive$/);
 
     if (request.method === "GET" && costingMatch) {
       const costing = repository.get(decodeURIComponent(costingMatch[1]));
@@ -75,6 +85,61 @@ async function handleApiRequest(request, response, url) {
         now: new Date().toISOString(),
         createId: randomUUID,
       }));
+      return;
+    }
+
+    if (request.method === "GET" && loadPlanMatch) {
+      const loadPlan = loadPlanRepository.get(decodeURIComponent(loadPlanMatch[1]));
+
+      if (!loadPlan) {
+        sendJson(response, 404, { error: "Load plan not found." });
+        return;
+      }
+
+      sendJson(response, 200, loadPlan);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/load-plans") {
+      const draft = await readJsonBody(request);
+      sendJson(response, 201, loadPlanRepository.save(draft, {
+        now: new Date().toISOString(),
+        createId: randomUUID,
+      }));
+      return;
+    }
+
+    if (request.method === "PUT" && loadPlanMatch) {
+      const draft = await readJsonBody(request);
+      sendJson(response, 200, loadPlanRepository.save(draft, {
+        existingId: decodeURIComponent(loadPlanMatch[1]),
+        now: new Date().toISOString(),
+        createId: randomUUID,
+      }));
+      return;
+    }
+
+    if (request.method === "DELETE" && loadPlanMatch) {
+      const deleted = loadPlanRepository.delete(decodeURIComponent(loadPlanMatch[1]));
+
+      if (!deleted) {
+        sendJson(response, 404, { error: "Load plan not found." });
+        return;
+      }
+
+      sendJson(response, 200, { deleted: true });
+      return;
+    }
+
+    if (request.method === "POST" && loadPlanArchiveMatch) {
+      const archived = loadPlanRepository.archive(decodeURIComponent(loadPlanArchiveMatch[1]), new Date().toISOString());
+
+      if (!archived) {
+        sendJson(response, 404, { error: "Load plan not found." });
+        return;
+      }
+
+      sendJson(response, 200, archived);
       return;
     }
 

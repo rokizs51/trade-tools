@@ -6,9 +6,13 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "npm run build && node scripts/serve.mjs",
-    "test": "npm run build && node test/calculateCosting.test.mjs && node test/persistence.test.mjs && node test/warnings.test.mjs && node test/sqliteRepository.test.mjs"
+    "test": "npm run build && node test/calculateCosting.test.mjs && node test/persistence.test.mjs && node test/warnings.test.mjs && node test/sqliteRepository.test.mjs && node test/loadUnits.test.mjs && node test/loadPacking.test.mjs && node test/loadPositions.test.mjs && node test/loadComparison.test.mjs && node test/loadHardening.test.mjs && node test/loadPlanRepository.test.mjs && node test/loadCostingIntegration.test.mjs"
   },
   "devDependencies": {
+    "@types/three": "^0.185.4",
     "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
   }
 }
