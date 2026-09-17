@@ -4,12 +4,15 @@ import { randomUUID } from "node:crypto";
 import { extname, join, normalize, resolve } from "node:path";
 import { createSqliteCostingRepository } from "./sqliteCostingRepository.mjs";
 import { createSqliteLoadPlanRepository } from "./sqliteLoadPlanRepository.mjs";
+import { createSqliteBuyerRepository } from "./sqliteBuyerRepository.mjs";
 
 const root = process.cwd();
 const port = Number(process.env.PORT ?? 4173);
 const databasePath = join(root, "data", "costings.sqlite");
 const repository = createSqliteCostingRepository(databasePath);
 const loadPlanRepository = createSqliteLoadPlanRepository(databasePath);
+const buyerRepository = createSqliteBuyerRepository(databasePath);
+const interruptedBuyerSearches = buyerRepository.interruptStaleSearchRuns(new Date().toISOString());
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -43,6 +46,10 @@ const server = createServer(async (request, response) => {
 server.listen(port, () => {
   console.log(`Export Cost Calculator: http://localhost:${port}`);
   console.log(`SQLite database: ${databasePath}`);
+
+  if (interruptedBuyerSearches > 0) {
+    console.log(`Recovered ${interruptedBuyerSearches} interrupted buyer search(es).`);
+  }
 });
 
 function sendJson(response, statusCode, body) {

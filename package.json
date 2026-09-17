@@ -5,14 +5,18 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "npm run build && node scripts/serve.mjs",
-    "test": "npm run build && node test/calculateCosting.test.mjs && node test/persistence.test.mjs && node test/warnings.test.mjs && node test/sqliteRepository.test.mjs && node test/loadUnits.test.mjs && node test/loadPacking.test.mjs && node test/loadPositions.test.mjs && node test/loadComparison.test.mjs && node test/loadHardening.test.mjs && node test/loadPlanRepository.test.mjs && node test/loadCostingIntegration.test.mjs"
+    "buyer:pipeline": "npm run build && node --env-file-if-exists=.env scripts/runBuyerFinderPipeline.mjs",
+    "buyer:spike": "npm run build && node --env-file-if-exists=.env scripts/runBuyerFinderSpike.mjs",
+    "dev": "npm run build && node --env-file-if-exists=.env scripts/serve.mjs",
+    "test": "npm run build && node test/calculateCosting.test.mjs && node test/persistence.test.mjs && node test/warnings.test.mjs && node test/sqliteRepository.test.mjs && node test/loadUnits.test.mjs && node test/loadPacking.test.mjs && node test/loadPositions.test.mjs && node test/loadComparison.test.mjs && node test/loadHardening.test.mjs && node test/loadPlanRepository.test.mjs && node test/loadCostingIntegration.test.mjs && node test/buyerSchemas.test.mjs && node test/buyerNormalization.test.mjs && node test/buyerScoring.test.mjs && node test/buyerDeduplication.test.mjs && node test/openRouterModelClient.test.mjs && node test/buyerRepository.test.mjs && node test/buyerJobRunner.test.mjs && node test/buyerOrchestrator.test.mjs && node test/buyerRuntime.test.mjs"
   },
   "devDependencies": {
     "@types/three": "^0.185.4",
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "three": "^0.185.1"
+    "@openrouter/sdk": "^1.2.136",
+    "three": "^0.185.1",
+    "zod": "^4.6.5"
   }
 }
