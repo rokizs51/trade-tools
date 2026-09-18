@@ -106,7 +106,7 @@ function metadata(id, model, costUsd = 0.001) {
   };
 }
 
-function createFakeClient({ candidates = [candidate("Good Imports")], onResearch, onVerify } = {}) {
+function createFakeClient({ candidates = [candidate("Good Imports")], onResearch, onVerify, plannerPlan = plan } = {}) {
   let verifierCalls = 0;
 
   return {
@@ -114,7 +114,7 @@ function createFakeClient({ candidates = [candidate("Good Imports")], onResearch
 
     async generateStructured(request) {
       if (request.schemaName === "buyer_search_plan") {
-        return { data: plan, metadata: metadata("planner-1", request.model) };
+        return { data: plannerPlan, metadata: metadata("planner-1", request.model) };
       }
 
       verifierCalls += 1;
@@ -173,10 +173,10 @@ function defaultLimits(overrides = {}) {
   };
 }
 
-async function withHarness({ client, limits = defaultLimits(), afterEnqueue }, run) {
+async function withHarness({ client, limits = defaultLimits(), afterEnqueue, searchInput = input }, run) {
   const dir = mkdtempSync(join(tmpdir(), "trade-tools-buyer-orchestrator-"));
   const repository = createSqliteBuyerRepository(join(dir, "trade-tools.sqlite"));
-  repository.createSearchRun(input, {
+  repository.createSearchRun(searchInput, {
     now: "2026-09-17T07:00:00.000Z",
     createId: () => "run-1",
   });
@@ -202,7 +202,7 @@ async function withHarness({ client, limits = defaultLimits(), afterEnqueue }, r
     recoverStaleRuns: false,
     now: () => "2026-09-17T08:00:00.000Z",
     execute: async (job) => {
-      summary = await orchestrator.run(input, job);
+      summary = await orchestrator.run(searchInput, job);
     },
   });
 
@@ -231,24 +231,30 @@ test("orchestrator runs planner, research, verification, scoring, and persistenc
 
     assert.equal(run.status, "COMPLETED");
     assert.deepEqual(run.plan.searchQueries, plan.searchQueries);
-    assert.equal(run.progress.current, 1);
+    assert.equal(run.progress.current, 2);
     assert.equal(run.progress.total, 2);
     assert.equal(run.usage.inputTokens, 50);
     assert.equal(run.usage.outputTokens, 25);
     assert.equal(run.usage.estimatedCostUsd, "0.00600000");
-    assert.equal(run.modelConfig.promptVersions.verifier, "buyer-verifier-v1");
+    assert.equal(run.modelConfig.promptVersions.verifier, "buyer-verifier-v3");
     assert.equal(run.modelConfig.calls.length, 5);
     assert.equal(results.length, 1);
     assert.equal(results[0].company.name, "Good Imports");
     assert.equal(results[0].confidence.score, 90);
     assert.deepEqual(summary, {
       researchedCandidateCount: 2,
+      groundedCandidateCount: 2,
+      groundingRejectedCount: 0,
       deduplicatedCandidateCount: 2,
+      verificationCandidateCount: 2,
       verifiedCandidateCount: 2,
       savedCandidateCount: 1,
       rejectedCandidateCount: 1,
       savedMatchCount: 1,
     });
+    assert.deepEqual(run.outcome.summary, summary);
+    assert.equal(run.outcome.decisions.length, 2);
+    assert.equal(run.outcome.decisions.find((decision) => decision.companyName === "Wrong Country Imports").isEligible, false);
   });
 });
 
@@ -270,6 +276,86 @@ test("orchestrator retries transient research failures", async () => {
   await withHarness({ client }, async ({ repository }) => {
     assert.equal(attempts, 2);
     assert.equal(repository.getSearchRun("run-1").status, "COMPLETED");
+  });
+});
+
+test("orchestrator reuses completed web research when formatting is retried", async () => {
+  const researched = candidate("Cached Research Imports");
+  const sources = researched.evidence.map(({ url, title, excerpt }) => ({ url, title, excerpt }));
+  const searchMetadata = metadata("cached-search", "fake/research", 0.002);
+  let calls = 0;
+  const client = createFakeClient({
+    async onResearch(request) {
+      calls += 1;
+
+      if (calls === 1) {
+        assert.equal(request.existingSearchResult, undefined);
+        await request.onSearchComplete?.({
+          researchText: "Reusable grounded research.",
+          sources,
+          metadata: searchMetadata,
+        });
+        const upstream = Object.assign(new Error("temporary formatting failure"), { statusCode: 500 });
+        throw new Error("OpenRouter research formatting stage failed.", { cause: upstream });
+      }
+
+      assert.deepEqual(request.existingSearchResult, {
+        researchText: "Reusable grounded research.",
+        sources,
+        metadata: searchMetadata,
+      });
+      const formattingMetadata = metadata("cached-format", request.formattingModel, 0.001);
+      return {
+        data: { candidates: [researched] },
+        researchText: request.existingSearchResult.researchText,
+        sources: request.existingSearchResult.sources,
+        searchMetadata: request.existingSearchResult.metadata,
+        formattingMetadata,
+        metadata: metadata("cached-total", request.formattingModel, 0.003),
+      };
+    },
+  });
+
+  await withHarness({ client }, async ({ repository }) => {
+    assert.equal(calls, 2);
+    assert.equal(repository.getSearchResults("run-1").length, 1);
+    const run = repository.getSearchRun("run-1");
+    assert.equal(run.modelConfig.calls.filter((call) => call.stage === "RESEARCH_SEARCH").length, 1);
+  });
+});
+
+test("orchestrator restores user-controlled planner fields when the model drifts", async () => {
+  const client = createFakeClient({
+    plannerPlan: {
+      ...plan,
+      targetCountry: "United States",
+      targetArea: "Texas",
+      buyerTypes: ["RETAILER"],
+    },
+  });
+
+  await withHarness({ client }, async ({ repository }) => {
+    const savedPlan = repository.getSearchRun("run-1").plan;
+    assert.equal(savedPlan.targetCountry, input.targetCountry);
+    assert.equal("targetArea" in savedPlan, false);
+    assert.deepEqual(savedPlan.buyerTypes, input.buyerTypes);
+  });
+});
+
+test("orchestrator ranks evidence-complete candidates before applying the result limit", async () => {
+  const incomplete = candidate("First Weak Candidate");
+  incomplete.evidence = incomplete.evidence.filter((source) => source.evidenceType === "COMMODITY");
+  const complete = candidate("Second Strong Candidate");
+  const client = createFakeClient({ candidates: [incomplete, complete] });
+
+  await withHarness({
+    client,
+    searchInput: { ...input, resultLimit: 1 },
+  }, async ({ repository, summary }) => {
+    const results = repository.getSearchResults("run-1");
+    assert.equal(results.length, 1);
+    assert.equal(results[0].company.name, "Second Strong Candidate");
+    assert.equal(summary.verificationCandidateCount, 1);
   });
 });
 
@@ -299,6 +385,43 @@ test("orchestrator rejects candidate evidence URLs not recovered by research", a
     assert.equal(client.verifierCalls, 0);
     assert.equal(summary.researchedCandidateCount, 1);
     assert.equal(summary.deduplicatedCandidateCount, 0);
+  });
+});
+
+test("orchestrator drops an unsupported evidence item without discarding an otherwise grounded candidate", async () => {
+  const grounded = candidate("Partially Grounded Imports");
+  grounded.evidence.push({
+    url: "https://invented.example/contact",
+    title: "Unsupported contact",
+    retrievedAt: "2026-09-17T08:00:00.000Z",
+    evidenceType: "CONTACT",
+    excerpt: "Unsupported contact claim.",
+  });
+  const client = createFakeClient({
+    candidates: [grounded],
+    async onResearch(request) {
+      const searchMetadata = metadata("partial-search", request.model);
+      const formattingMetadata = metadata("partial-format", request.formattingModel);
+      const sources = grounded.evidence
+        .filter((source) => !source.url.includes("invented.example"))
+        .map(({ url, title, excerpt }) => ({ url, title, excerpt }));
+      await request.onSearchComplete?.({ researchText: "Grounded research.", sources, metadata: searchMetadata });
+      return {
+        data: { candidates: [grounded] },
+        researchText: "Grounded research.",
+        sources,
+        searchMetadata,
+        formattingMetadata,
+        metadata: metadata("partial-total", request.formattingModel),
+      };
+    },
+  });
+
+  await withHarness({ client }, async ({ repository, summary }) => {
+    const results = repository.getSearchResults("run-1");
+    assert.equal(results.length, 1);
+    assert.equal(results[0].sources.some((source) => source.url.includes("invented.example")), false);
+    assert.equal(summary.groundingRejectedCount, 0);
   });
 });
 

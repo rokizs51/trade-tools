@@ -26,6 +26,7 @@
           <nav class="tool-switch" aria-label="Tools">
             <button id="show-costing-tool" class="view-button is-active" type="button">Costing calculator</button>
             <button id="show-load-tool" class="view-button" type="button">Load calculator</button>
+            <button id="show-buyer-tool" class="view-button" type="button">Buyer finder</button>
           </nav>
         </div>
       </header>
@@ -515,6 +516,196 @@
           </div>
           <p id="load-archive-empty" class="empty-state">No archived load plans.</p>
           <p id="load-archive-status" class="save-status" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section id="buyer-search-section" class="buyer-section" aria-labelledby="buyer-search-title" hidden>
+        <div class="buyer-intro">
+          <div>
+            <p class="eyebrow">AI-assisted research</p>
+            <h2 id="buyer-search-title">Find potential export buyers</h2>
+            <p class="summary-text">Describe the product and market. The research workflow will return evidence-backed company candidates for your review.</p>
+          </div>
+          <button id="buyer-new-search" class="text-button secondary-button" type="button">New search</button>
+        </div>
+
+        <div class="buyer-workspace">
+          <form id="buyer-search-form" class="panel buyer-search-form">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Search brief</p>
+                <h2>What should we look for?</h2>
+              </div>
+              <span class="required-note">* Required</span>
+            </div>
+
+            <p id="buyer-form-state" class="buyer-form-state" role="status" hidden></p>
+
+            <div class="field-grid">
+              <label>
+                <span>Commodity *</span>
+                <input id="buyer-commodity" type="text" maxlength="120" placeholder="Semi-husked coconut" autocomplete="off" required />
+              </label>
+              <label>
+                <span>Target country *</span>
+                <input id="buyer-country" type="text" maxlength="100" placeholder="United Arab Emirates" autocomplete="off" required />
+              </label>
+              <label>
+                <span>Target city or area</span>
+                <input id="buyer-area" type="text" maxlength="100" placeholder="Dubai" autocomplete="off" />
+              </label>
+              <label>
+                <span>HS code</span>
+                <input id="buyer-hs-code" type="text" maxlength="16" placeholder="0801.19" autocomplete="off" />
+              </label>
+              <label>
+                <span>Origin country</span>
+                <input id="buyer-origin-country" type="text" maxlength="100" placeholder="Indonesia" autocomplete="off" />
+              </label>
+              <label>
+                <span>Number of candidates</span>
+                <input id="buyer-result-limit" type="number" min="1" max="25" step="1" value="10" required />
+              </label>
+            </div>
+
+            <fieldset class="buyer-types">
+              <legend>Buyer types *</legend>
+              <div class="buyer-type-grid">
+                <label><input type="checkbox" name="buyer-type" value="IMPORTER" checked /><span>Importer</span></label>
+                <label><input type="checkbox" name="buyer-type" value="DISTRIBUTOR" checked /><span>Distributor</span></label>
+                <label><input type="checkbox" name="buyer-type" value="WHOLESALER" /><span>Wholesaler</span></label>
+                <label><input type="checkbox" name="buyer-type" value="PROCESSOR" /><span>Processor</span></label>
+                <label><input type="checkbox" name="buyer-type" value="MANUFACTURER" /><span>Manufacturer</span></label>
+                <label><input type="checkbox" name="buyer-type" value="RETAILER" /><span>Retailer</span></label>
+              </div>
+            </fieldset>
+
+            <details class="buyer-advanced">
+              <summary>More search guidance</summary>
+              <div class="field-grid buyer-advanced-fields">
+                <label>
+                  <span>Commodity aliases</span>
+                  <input id="buyer-aliases" type="text" placeholder="desiccated coconut, copra" autocomplete="off" />
+                  <small>Separate terms with commas.</small>
+                </label>
+                <label>
+                  <span>Exclude names or keywords</span>
+                  <input id="buyer-exclusions" type="text" placeholder="exporter, marketplace" autocomplete="off" />
+                  <small>Separate terms with commas.</small>
+                </label>
+                <label class="buyer-wide-field">
+                  <span>Product details</span>
+                  <textarea id="buyer-product-details" maxlength="500" rows="3" placeholder="Grade, form, certification, packaging, or other useful details"></textarea>
+                </label>
+              </div>
+              <div class="buyer-requirements">
+                <label><input id="buyer-require-website" type="checkbox" /><span>Only show companies with a public website</span></label>
+                <label><input id="buyer-require-contact" type="checkbox" /><span>Only show companies with a public contact method</span></label>
+              </div>
+            </details>
+
+            <p id="buyer-form-error" class="error-message" role="alert"></p>
+            <div class="buyer-form-actions">
+              <p id="buyer-form-hint" class="form-hint">Results are potential buyers and require human review before outreach.</p>
+              <button id="buyer-start-search" class="text-button" type="submit">Start research</button>
+            </div>
+          </form>
+
+          <aside id="buyer-progress-panel" class="panel buyer-progress-panel" aria-live="polite">
+            <div class="buyer-status-heading">
+              <div>
+                <p class="eyebrow">Current search</p>
+                <h2 id="buyer-progress-title">Ready to research</h2>
+              </div>
+              <span id="buyer-status-badge" class="status-badge">Ready</span>
+            </div>
+            <p id="buyer-progress-summary" class="summary-text">Complete the search brief to begin.</p>
+            <div class="progress-track" aria-hidden="true"><span id="buyer-progress-bar"></span></div>
+            <div class="buyer-progress-meta">
+              <span id="buyer-progress-count">0 of 0</span>
+              <span id="buyer-progress-stage">Not started</span>
+            </div>
+            <dl id="buyer-usage" class="buyer-usage" hidden>
+              <div><dt>Input tokens</dt><dd id="buyer-input-tokens">0</dd></div>
+              <div><dt>Output tokens</dt><dd id="buyer-output-tokens">0</dd></div>
+              <div><dt>Estimated cost</dt><dd id="buyer-cost">$0.0000</dd></div>
+            </dl>
+            <p id="buyer-progress-error" class="error-message" role="alert"></p>
+            <div id="buyer-outcome" class="buyer-outcome" hidden>
+              <strong id="buyer-outcome-summary"></strong>
+              <details id="buyer-rejection-details" hidden>
+                <summary>Why candidates were not qualified</summary>
+                <ul id="buyer-rejection-list"></ul>
+              </details>
+            </div>
+            <div class="buyer-progress-actions">
+              <button id="buyer-retry-search" class="text-button secondary-button" type="button" hidden>Retry with same inputs</button>
+              <button id="buyer-cancel-search" class="text-button danger-button" type="button" hidden>Cancel search</button>
+            </div>
+          </aside>
+        </div>
+
+        <section id="buyer-results-panel" class="panel buyer-results-panel" aria-labelledby="buyer-results-title" hidden>
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Potential buyers</p>
+              <h2 id="buyer-results-title">Ranked candidates</h2>
+            </div>
+            <span id="buyer-results-count" class="result-count">0 candidates</span>
+          </div>
+          <div class="buyer-results-layout">
+            <div>
+              <div class="history-table-wrap buyer-result-table-wrap">
+                <table class="history-table buyer-result-table">
+                  <thead><tr><th>Company</th><th>Role</th><th>Confidence</th><th>Evidence</th><th>Review</th></tr></thead>
+                  <tbody id="buyer-result-list"></tbody>
+                </table>
+              </div>
+              <p id="buyer-results-empty" class="empty-state">No qualified candidates were saved for this search.</p>
+            </div>
+            <aside id="buyer-detail" class="buyer-detail" aria-live="polite">
+              <div class="buyer-detail-empty">
+                <strong>Select a candidate</strong>
+                <span>Company details, contacts, and supporting evidence will appear here.</span>
+              </div>
+            </aside>
+          </div>
+        </section>
+      </section>
+
+      <section id="buyer-history-section" class="buyer-section" aria-labelledby="buyer-history-title" hidden>
+        <div class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Research history</p>
+              <h2 id="buyer-history-title">Buyer searches</h2>
+            </div>
+            <button id="buyer-history-new" class="text-button" type="button">New search</button>
+          </div>
+          <div class="history-table-wrap">
+            <table class="history-table buyer-history-table">
+              <thead><tr><th>Commodity</th><th>Market</th><th>Status</th><th>Progress</th><th>Started</th><th>Action</th></tr></thead>
+              <tbody id="buyer-history-rows"></tbody>
+            </table>
+          </div>
+          <p id="buyer-history-empty" class="empty-state">No buyer searches yet.</p>
+          <p id="buyer-history-error" class="error-message" role="alert"></p>
+        </div>
+      </section>
+
+      <section id="buyer-saved-section" class="buyer-section" aria-labelledby="buyer-saved-title" hidden>
+        <div class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Approved candidates</p>
+              <h2 id="buyer-saved-title">Saved buyers</h2>
+            </div>
+            <button id="buyer-saved-refresh" class="text-button secondary-button" type="button">Refresh</button>
+          </div>
+          <p class="summary-text">Companies approved during review, grouped across your completed searches.</p>
+          <div id="buyer-saved-list" class="buyer-saved-list"></div>
+          <p id="buyer-saved-empty" class="empty-state">No approved buyers yet. Approve a candidate from a search result to save it here.</p>
+          <p id="buyer-saved-error" class="error-message" role="alert"></p>
         </div>
       </section>
     </main>

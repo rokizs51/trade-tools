@@ -29,6 +29,7 @@ import {
   type WeightUnit,
 } from "./domain/load/index.js";
 import { LoadViewer, type CameraPreset, type ContainerDisplayMode } from "./loadViewer.js";
+import { BuyerFinderUi } from "./buyerFinderUi.js";
 
 type CostRowState = {
   id: string;
@@ -41,7 +42,7 @@ type CostRowState = {
 };
 
 type PricingMode = PricingInput["type"];
-type ToolName = "costing" | "load";
+type ToolName = "costing" | "load" | "buyer";
 type ToolSubview = "calculator" | "saved" | "archived";
 
 const stageOrder: Record<CostStage, number> = {
@@ -70,6 +71,7 @@ const backToListButton = mustGetElement("back-to-list");
 const historyNewCostingButton = mustGetElement("history-new-costing");
 const showCostingToolButton = mustGetElement("show-costing-tool");
 const showLoadToolButton = mustGetElement("show-load-tool");
+const showBuyerToolButton = mustGetElement("show-buyer-tool");
 const showCalculatorButton = mustGetElement("show-calculator");
 const showSavedPlansButton = mustGetElement("show-saved-plans");
 const showArchivedPlansButton = mustGetElement("show-archived-plans");
@@ -108,6 +110,7 @@ const loadArchiveEmpty = mustGetElement("load-archive-empty");
 const loadArchiveStatus = mustGetElement("load-archive-status");
 const cameraPresetButtons = document.querySelectorAll<HTMLButtonElement>("[data-camera-preset]");
 const loadViewer = new LoadViewer(mustGetElement("load-viewer"));
+const buyerFinderUi = new BuyerFinderUi((subview) => setWorkspace("buyer", subview));
 let currentCostingId: string | undefined;
 let activeTool: ToolName = "costing";
 let activeSubview: ToolSubview = "calculator";
@@ -130,6 +133,7 @@ backToListButton.addEventListener("click", () => setWorkspace("costing", "saved"
 historyNewCostingButton.addEventListener("click", handleNewCosting);
 showCostingToolButton.addEventListener("click", () => setWorkspace("costing", "calculator"));
 showLoadToolButton.addEventListener("click", () => setWorkspace("load", "calculator"));
+showBuyerToolButton.addEventListener("click", () => setWorkspace("buyer", "calculator"));
 showCalculatorButton.addEventListener("click", () => setWorkspace(activeTool, "calculator"));
 showSavedPlansButton.addEventListener("click", () => setWorkspace(activeTool, "saved"));
 showArchivedPlansButton.addEventListener("click", () => setWorkspace(activeTool, "archived"));
@@ -805,12 +809,21 @@ function setWorkspace(tool: ToolName, subview: ToolSubview): void {
   loadSection.hidden = !showLoadCalculator;
   loadSavedSection.hidden = !showLoadSaved;
   loadArchiveSection.hidden = !showLoadArchived;
+  if (tool === "buyer") {
+    buyerFinderUi.show(subview);
+  } else {
+    buyerFinderUi.hide();
+  }
 
   showCostingToolButton.classList.toggle("is-active", tool === "costing");
   showLoadToolButton.classList.toggle("is-active", tool === "load");
+  showBuyerToolButton.classList.toggle("is-active", tool === "buyer");
   showCalculatorButton.classList.toggle("is-active", subview === "calculator");
   showSavedPlansButton.classList.toggle("is-active", subview === "saved");
   showArchivedPlansButton.classList.toggle("is-active", subview === "archived");
+  showCalculatorButton.textContent = tool === "buyer" ? "Search" : "Calculator";
+  showSavedPlansButton.textContent = tool === "buyer" ? "History" : "Saved Plans";
+  showArchivedPlansButton.textContent = tool === "buyer" ? "Saved Buyers" : "Archived";
   pageTitle.textContent = getPageTitle(tool, subview);
 
   if (showCostingSaved) {
@@ -835,6 +848,12 @@ function setWorkspace(tool: ToolName, subview: ToolSubview): void {
 }
 
 function getPageTitle(tool: ToolName, subview: ToolSubview): string {
+  if (tool === "buyer") {
+    if (subview === "saved") return "Buyer Finder History";
+    if (subview === "archived") return "Saved Buyers";
+    return "Buyer Finder";
+  }
+
   const toolLabel = tool === "costing" ? "Costing Calculator" : "Load Calculator";
 
   if (subview === "calculator") {

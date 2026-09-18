@@ -5,6 +5,8 @@ import { extname, join, normalize, resolve } from "node:path";
 import { createSqliteCostingRepository } from "./sqliteCostingRepository.mjs";
 import { createSqliteLoadPlanRepository } from "./sqliteLoadPlanRepository.mjs";
 import { createSqliteBuyerRepository } from "./sqliteBuyerRepository.mjs";
+import { createBuyerDiscoveryRuntime } from "./buyerDiscoveryRuntime.mjs";
+import { createBuyerApiHandler } from "./buyerApi.mjs";
 
 const root = process.cwd();
 const port = Number(process.env.PORT ?? 4173);
@@ -13,6 +15,13 @@ const repository = createSqliteCostingRepository(databasePath);
 const loadPlanRepository = createSqliteLoadPlanRepository(databasePath);
 const buyerRepository = createSqliteBuyerRepository(databasePath);
 const interruptedBuyerSearches = buyerRepository.interruptStaleSearchRuns(new Date().toISOString());
+const buyerRuntime = process.env.OPENROUTER_API_KEY
+  ? createBuyerDiscoveryRuntime({ repository: buyerRepository })
+  : undefined;
+const handleBuyerApiRequest = createBuyerApiHandler({
+  repository: buyerRepository,
+  runtime: buyerRuntime,
+});
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -59,6 +68,10 @@ function sendJson(response, statusCode, body) {
 
 async function handleApiRequest(request, response, url) {
   try {
+    if (await handleBuyerApiRequest(request, response, url)) {
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/costings") {
       sendJson(response, 200, repository.list());
       return;

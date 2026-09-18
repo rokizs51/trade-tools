@@ -1,6 +1,6 @@
 # AI Export Buyer Finder Implementation Plan
 
-Status: Milestones 0, 1, 2, and 3 completed
+Status: Milestones 0, 1, 2, 3, 4, and 5 completed
 
 Product principle:
 
@@ -1128,6 +1128,10 @@ Implementation note:
 
 ### Milestone 4: API
 
+Status:
+
+Completed as of 2026-09-18.
+
 Goal:
 
 Expose the pipeline through stable local HTTP endpoints.
@@ -1146,7 +1150,26 @@ Definition of Done:
 - API errors are safe and understandable.
 - Existing costing and load APIs are unchanged.
 
+Implementation note:
+
+- Added start, list, status, results, cancellation, and candidate-review endpoints.
+- Added strict Zod validation for search and review request bodies, including the 25-result cap.
+- Added stable structured errors for validation, missing resources, invalid state, oversized bodies,
+  unavailable configuration, queue saturation, and internal failures.
+- Added a configurable bounded waiting queue while retaining one-at-a-time local execution.
+- Kept history, status, results, and review endpoints available when the OpenRouter key is absent;
+  only starting new AI work requires the configured runtime.
+- Added safe API projections that omit prompts, provider routing, normalized database fields, and
+  internal evidence IDs while retaining contact-to-source provenance.
+- Added real local HTTP tests for asynchronous acceptance, validation, polling, results,
+  cancellation, review transitions, missing IDs, unavailable configuration, and queue saturation.
+- Documented the local contract in `docs/BUYER_FINDER_API.md`.
+
 ### Milestone 5: Buyer Finder UI
+
+Status:
+
+Completed as of 2026-09-18.
 
 Goal:
 
@@ -1170,7 +1193,44 @@ Definition of Done:
 - Technical model settings remain hidden.
 - Existing tools still work.
 
+Implementation note:
+
+- Added Buyer Finder to the existing tool switch without introducing a frontend framework or exposing
+  model/provider controls.
+- Added a structured, accessible search form for commodity, country, area, HS code, origin, buyer
+  roles, product guidance, exclusions, result count, website, and contact requirements.
+- Added asynchronous progress polling, stage and usage reporting, cancellation, recoverable terminal
+  states, and same-input retry preparation.
+- Added ranked candidate results in a table with a detail panel for company information, public
+  contacts, confidence, review state, and clickable source evidence.
+- Added approve, reject, and return-to-review actions through the Milestone 4 review API.
+- Added durable search history and an aggregated Saved Buyers view for approved candidates.
+- Search briefs are locked once a run starts and remain read-only when reopened from history;
+  users must select New search for another run, while failed or cancelled runs retain an explicit retry path.
+- Added responsive layouts and verified the search, history, saved-buyer, empty-result, validation,
+  and existing-tool navigation states in desktop and mobile browser viewports.
+
+Pipeline qualification repair (2026-09-18):
+
+- Updated the research and verifier evidence contracts so identity, location, commodity, and buyer
+  role claims are returned as separately typed evidence and missing evidence is explicit.
+- Enforced the user's country, area, requested buyer roles, and exclusions after planning so planner
+  drift cannot silently broaden or change the search.
+- Changed provenance filtering to discard unsupported evidence and its dependent contacts without
+  automatically discarding an otherwise grounded candidate.
+- Ranked grounded candidates by mandatory evidence completeness before applying the verification
+  limit, preventing weaker early results from displacing better-supported candidates.
+- Persisted a safe run outcome containing stage counts and candidate-level rejection diagnostics,
+  exposed it through the API, and displayed it in the UI for newly completed searches.
+- Corrected final progress reporting so verification progress reflects candidates processed rather
+  than only candidates saved.
+
 ### Milestone 6: Evaluation And Hardening
+
+Status:
+
+Harness and reliability hardening implemented as of 2026-09-18. A reviewed live comparison is still
+required before the quality gate can be marked complete.
 
 Goal:
 
@@ -1196,6 +1256,20 @@ Definition of Done:
 - Tests pass.
 - Lint passes if a lint script exists; otherwise lint remains documented as not configured.
 - Remaining limitations are documented.
+
+Implementation note:
+
+- Added a deterministic evaluation scorer for precision, target-country and buyer-role accuracy,
+  evidence completeness, contact accuracy, source coverage, contact provenance, unsupported claims,
+  duplicate rate, abstentions, latency, token usage, and cost.
+- Added a guarded live comparison command that runs the versioned fixtures against baseline and
+  candidate model configurations and produces a human-review JSON file.
+- Added a separate scoring command that requires every returned candidate to be reviewed before it
+  evaluates the release thresholds.
+- Added versioned prompt-injection defenses and an offline hostile-instruction fixture set.
+- Added in-memory research checkpoint reuse so retrying a failed formatting call does not repeat a
+  completed paid web search.
+- Kept all live evaluation calls out of the normal test suite and added a maximum-run guard.
 
 ### Milestone 7: Deployment Readiness
 

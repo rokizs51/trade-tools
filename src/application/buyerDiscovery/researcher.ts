@@ -27,6 +27,7 @@ export function createBuyerResearcher(options: BuyerResearcherOptions) {
       runOptions: {
         signal: AbortSignal;
         retrievedAt: string;
+        existingSearchResult?: ResearchSearchResult;
         onSearchComplete?: (result: ResearchSearchResult) => void | Promise<void>;
       },
     ): Promise<ResearchCallResult<BuyerCandidateBatch>> {
@@ -47,6 +48,9 @@ export function createBuyerResearcher(options: BuyerResearcherOptions) {
         maxResultsPerSearch: options.maxResultsPerSearch,
         searchContextSize: options.searchContextSize ?? "medium",
         signal: runOptions.signal,
+        ...(runOptions.existingSearchResult
+          ? { existingSearchResult: runOptions.existingSearchResult }
+          : {}),
         ...(runOptions.onSearchComplete ? { onSearchComplete: runOptions.onSearchComplete } : {}),
       });
     },

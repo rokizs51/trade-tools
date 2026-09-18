@@ -94,3 +94,57 @@ test("buyer runtime validates numeric environment settings", () => {
     /BUYER_SEARCH_MAX_COST_USD must be a positive number/,
   );
 });
+
+test("buyer runtime bounds the waiting queue before creating another search run", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "trade-tools-buyer-runtime-queue-"));
+  const repository = createSqliteBuyerRepository(join(dir, "trade-tools.sqlite"));
+  let markStarted;
+  const started = new Promise((resolve) => { markStarted = resolve; });
+  const client = {
+    generateStructured(request) {
+      markStarted();
+      return new Promise((resolve, reject) => {
+        request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true });
+      });
+    },
+    async research() {
+      throw new Error("Research should not run in this queue-limit test.");
+    },
+  };
+  let id = 0;
+
+  try {
+    const runtime = createBuyerDiscoveryRuntime({
+      repository,
+      client,
+      env: {
+        BUYER_SEARCH_MAX_QUEUED: "1",
+        BUYER_SEARCH_MAX_RETRIES: "0",
+      },
+      now: () => "2026-09-18T08:00:00.000Z",
+      createId: () => `queue-${++id}`,
+    });
+    const searchInput = {
+      commodity: "Coconut",
+      targetCountry: "United Arab Emirates",
+      buyerTypes: ["IMPORTER"],
+      resultLimit: 10,
+    };
+    const running = runtime.start(searchInput);
+    await started;
+    const queued = runtime.start(searchInput);
+
+    assert.throws(
+      () => runtime.start(searchInput),
+      (error) => error.code === "BUYER_SEARCH_QUEUE_FULL",
+    );
+    assert.equal(repository.listSearchRuns().length, 2);
+
+    assert.equal(runtime.cancel(running.id), true);
+    assert.equal(runtime.cancel(queued.id), true);
+    await runtime.onIdle();
+  } finally {
+    repository.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

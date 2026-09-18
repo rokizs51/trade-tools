@@ -12,6 +12,7 @@ import {
 import { calculateBuyerConfidence } from "../../domain/buyers/scoring.js";
 import type {
   BuyerSearchInput,
+  BuyerSearchPlan,
   CandidateVerification,
   ResearchCandidate,
   SearchRunStatus,
@@ -24,6 +25,7 @@ import {
 import type {
   ModelCallMetadata,
   ModelClient,
+  ResearchSearchResult,
 } from "../../infrastructure/ai/types.js";
 import { BuyerDiscoveryBudgetExceededError, BuyerDiscoveryTimeoutError } from "./errors.js";
 import { createBuyerResearcher } from "./researcher.js";
@@ -83,7 +85,10 @@ export interface BuyerDiscoveryOrchestratorOptions {
 
 export interface BuyerDiscoverySummary {
   researchedCandidateCount: number;
+  groundedCandidateCount: number;
+  groundingRejectedCount: number;
   deduplicatedCandidateCount: number;
+  verificationCandidateCount: number;
   verifiedCandidateCount: number;
   savedCandidateCount: number;
   rejectedCandidateCount: number;
@@ -132,20 +137,24 @@ export function createBuyerDiscoveryOrchestrator(options: BuyerDiscoveryOrchestr
       try {
         job.updateProgress({ current: 0, total: 1, stage: "Preparing search" });
         const planResult = await planner.plan(input, runSignal.signal);
+        const plan = enforcePlanInvariants(input, planResult.data);
         record("PLANNER", planResult.metadata);
         job.updateProgress({ current: 1, total: 1, stage: "Preparing search" });
         job.transition("RESEARCHING", {
-          plan: planResult.data,
+          plan,
           modelConfig: telemetry.snapshot().modelConfig,
         });
 
         job.updateProgress({ current: 0, total: 1, stage: "Searching sources" });
         const retrievedAt = now();
+        let completedSearch: ResearchSearchResult | undefined;
         const researchResult = await withBuyerDiscoveryRetry(
-          () => researcher.research(input, planResult.data, {
+          () => researcher.research(input, plan, {
             signal: runSignal.signal,
             retrievedAt,
+            ...(completedSearch ? { existingSearchResult: completedSearch } : {}),
             onSearchComplete(searchResult) {
+              completedSearch = searchResult;
               record("RESEARCH_SEARCH", searchResult.metadata);
             },
           }),
@@ -155,13 +164,13 @@ export function createBuyerDiscoveryOrchestrator(options: BuyerDiscoveryOrchestr
         record("RESEARCH_FORMATTING", researchResult.formattingMetadata);
         job.updateProgress({ current: 1, total: 1, stage: "Searching sources" });
 
-        const rawCandidates = retainGroundedCandidates(
+        const grounding = retainGroundedCandidates(
           researchResult.data.candidates.slice(0, options.limits.maxRawCandidates),
           researchResult.sources.map((source) => source.url),
           retrievedAt,
         );
-        const deduplicated = deduplicateBuyerCandidates(rawCandidates);
-        const candidates = deduplicated.candidates.slice(0, input.resultLimit);
+        const deduplicated = deduplicateBuyerCandidates(grounding.candidates);
+        const candidates = rankCandidatesForVerification(deduplicated.candidates).slice(0, input.resultLimit);
         job.transition("VERIFYING", {
           progressCurrent: 0,
           progressTotal: candidates.length,
@@ -172,6 +181,7 @@ export function createBuyerDiscoveryOrchestrator(options: BuyerDiscoveryOrchestr
         let savedCandidateCount = 0;
         let rejectedCandidateCount = 0;
         let savedMatchCount = 0;
+        const decisions: BuyerCandidateDecision[] = [...grounding.decisions];
 
         await mapWithConcurrency(
           candidates,
@@ -191,6 +201,15 @@ export function createBuyerDiscoveryOrchestrator(options: BuyerDiscoveryOrchestr
             );
             const confidence = calculateBuyerConfidence(verification);
             verifiedCandidateCount += 1;
+            decisions.push({
+              companyName: candidate.companyName,
+              status: verification.status,
+              isEligible: confidence.isEligible,
+              confidenceScore: confidence.score,
+              confidenceLevel: confidence.level,
+              missingEvidenceTypes: getMissingMandatoryEvidenceTypes(candidate),
+              rejectionReasons: confidence.rejectionReasons,
+            });
 
             if (confidence.isEligible) {
               const buyerTypes = candidate.buyerTypes.filter((type) => input.buyerTypes.includes(type));
@@ -237,20 +256,29 @@ export function createBuyerDiscoveryOrchestrator(options: BuyerDiscoveryOrchestr
           },
         );
 
-        job.transition("SAVING", {
-          progressCurrent: savedCandidateCount,
-          progressTotal: candidates.length,
-          modelConfig: telemetry.snapshot().modelConfig,
-        });
-
-        return {
+        const summary = {
           researchedCandidateCount: researchResult.data.candidates.length,
+          groundedCandidateCount: grounding.candidates.length,
+          groundingRejectedCount: grounding.decisions.length,
           deduplicatedCandidateCount: deduplicated.candidates.length,
+          verificationCandidateCount: candidates.length,
           verifiedCandidateCount,
           savedCandidateCount,
           rejectedCandidateCount,
           savedMatchCount,
         };
+
+        job.transition("SAVING", {
+          progressCurrent: verifiedCandidateCount,
+          progressTotal: candidates.length,
+          modelConfig: telemetry.snapshot().modelConfig,
+          outcome: {
+            summary,
+            decisions: decisions.sort((first, second) => first.companyName.localeCompare(second.companyName)),
+          },
+        });
+
+        return summary;
       } finally {
         runSignal.cleanup();
       }
@@ -420,26 +448,90 @@ function enforceDeterministicRequirements(
   };
 }
 
+interface BuyerCandidateDecision {
+  companyName: string;
+  status: "VERIFIED" | "NEEDS_REVIEW" | "REJECTED";
+  isEligible: boolean;
+  confidenceScore: number;
+  confidenceLevel: "HIGH" | "MEDIUM" | "LOW";
+  missingEvidenceTypes: string[];
+  rejectionReasons: string[];
+}
+
 function retainGroundedCandidates(
   candidates: ResearchCandidate[],
   recoveredSourceUrls: string[],
   retrievedAt: string,
-): ResearchCandidate[] {
+): { candidates: ResearchCandidate[]; decisions: BuyerCandidateDecision[] } {
   const recovered = new Set(
     recoveredSourceUrls
       .map((url) => normalizeSourceUrl(url))
       .filter((url): url is string => Boolean(url)),
   );
 
-  return candidates
-    .filter((candidate) => candidate.evidence.length > 0 && candidate.evidence.every((source) => {
+  const retained: ResearchCandidate[] = [];
+  const decisions: BuyerCandidateDecision[] = [];
+
+  for (const candidate of candidates) {
+    const evidence = candidate.evidence.filter((source) => {
       const normalized = normalizeSourceUrl(source.url);
       return normalized !== undefined && recovered.has(normalized);
-    }))
-    .map((candidate) => ({
+    }).map((source) => ({ ...source, retrievedAt }));
+    const evidenceUrls = new Set(evidence.map((source) => normalizeSourceUrl(source.url)));
+
+    if (evidence.length === 0) {
+      decisions.push({
+        companyName: candidate.companyName,
+        status: "REJECTED",
+        isEligible: false,
+        confidenceScore: 0,
+        confidenceLevel: "LOW",
+        missingEvidenceTypes: [...MANDATORY_EVIDENCE_TYPES],
+        rejectionReasons: ["No candidate evidence URL was recovered from the web-research response."],
+      });
+      continue;
+    }
+
+    retained.push({
       ...candidate,
-      evidence: candidate.evidence.map((source) => ({ ...source, retrievedAt })),
-    }));
+      evidence,
+      contacts: candidate.contacts.filter((contact) => evidenceUrls.has(normalizeSourceUrl(contact.sourceUrl))),
+    });
+  }
+
+  return { candidates: retained, decisions };
+}
+
+const MANDATORY_EVIDENCE_TYPES = ["COMPANY_IDENTITY", "LOCATION", "COMMODITY", "BUYER_ROLE"] as const;
+
+function getMissingMandatoryEvidenceTypes(candidate: ResearchCandidate): string[] {
+  const present = new Set(candidate.evidence.map((source) => source.evidenceType));
+  return MANDATORY_EVIDENCE_TYPES.filter((type) => !present.has(type));
+}
+
+function rankCandidatesForVerification(candidates: ResearchCandidate[]): ResearchCandidate[] {
+  return candidates
+    .map((candidate, index) => ({ candidate, index, score: candidateEvidenceCompleteness(candidate) }))
+    .sort((first, second) => second.score - first.score || first.index - second.index)
+    .map(({ candidate }) => candidate);
+}
+
+function candidateEvidenceCompleteness(candidate: ResearchCandidate): number {
+  const evidenceTypes = new Set(candidate.evidence.map((source) => source.evidenceType));
+  const mandatoryCount = MANDATORY_EVIDENCE_TYPES.filter((type) => evidenceTypes.has(type)).length;
+  const sourceCount = new Set(candidate.evidence.map((source) => normalizeSourceUrl(source.url))).size;
+  return mandatoryCount * 100 + Math.min(sourceCount, 9) * 10 + (candidate.websiteUrl ? 5 : 0) + (candidate.contacts.length > 0 ? 1 : 0);
+}
+
+function enforcePlanInvariants(input: BuyerSearchInput, proposed: BuyerSearchPlan): BuyerSearchPlan {
+  const { targetArea: _proposedTargetArea, ...rest } = proposed;
+  return {
+    ...rest,
+    targetCountry: input.targetCountry,
+    ...(input.targetArea ? { targetArea: input.targetArea } : {}),
+    buyerTypes: [...input.buyerTypes],
+    exclusions: [...new Set([...(proposed.exclusions ?? []), ...(input.exclusions ?? [])])],
+  };
 }
 
 async function mapWithConcurrency<T>(

@@ -310,6 +310,44 @@ test("research calls configure bounded web search and recover unique source URLs
   assert.equal(capturedOptions[1].signal, controller.signal);
 });
 
+test("research resumes formatting from a captured search result without another web search", async () => {
+  const captured = [];
+  const searchResult = {
+    researchText: "Previously captured research.",
+    sources: [{ url: "https://example.com/source", title: "Example source" }],
+    metadata: {
+      requestId: "existing-search",
+      requestedModel: "provider/research-model",
+      actualModel: "provider/research-model",
+      latencyMs: 100,
+    },
+  };
+  const client = new OpenRouterModelClient({
+    transport: {
+      async send(request) {
+        captured.push(request);
+        return response('{"answer":"formatted"}', { id: "resumed-formatting" });
+      },
+    },
+  });
+
+  const result = await client.research({
+    model: "provider/research-model",
+    formattingModel: "provider/formatting-model",
+    instructions: "Research.",
+    input: "criteria",
+    schemaName: "research",
+    outputSchema: ResultSchema,
+    existingSearchResult: searchResult,
+  });
+
+  assert.equal(captured.length, 1);
+  assert.equal(captured[0].responsesRequest.tools, undefined);
+  assert.match(captured[0].responsesRequest.input, /Previously captured research/);
+  assert.equal(result.searchMetadata.requestId, "existing-search");
+  assert.equal(result.formattingMetadata.requestId, "resumed-formatting");
+});
+
 test("the production client refuses to initialize without a server-side API key", () => {
   assert.throws(
     () => new OpenRouterModelClient({}),

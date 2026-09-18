@@ -39,6 +39,7 @@ export interface StructuredModelRequest<T> {
 
 export interface ResearchModelRequest<T> extends StructuredModelRequest<T> {
   formattingModel?: string;
+  existingSearchResult?: ResearchSearchResult;
   onSearchComplete?: (result: ResearchSearchResult) => void | Promise<void>;
   maxSearchCalls?: number;
   maxResultsPerSearch?: number;

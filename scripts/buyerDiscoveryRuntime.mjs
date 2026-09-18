@@ -10,6 +10,15 @@ import { createBuyerDiscoveryOrchestrator } from "../dist/application/buyerDisco
 import { OpenRouterModelClient } from "../dist/infrastructure/ai/index.js";
 import { createBuyerSearchJobRunner } from "./buyerSearchJobRunner.mjs";
 
+export class BuyerSearchQueueFullError extends Error {
+  constructor(maxQueuedSearches) {
+    super(`The local buyer-search queue already contains ${maxQueuedSearches} waiting searches.`);
+    this.name = "BuyerSearchQueueFullError";
+    this.code = "BUYER_SEARCH_QUEUE_FULL";
+    this.maxQueuedSearches = maxQueuedSearches;
+  }
+}
+
 export function createBuyerDiscoveryRuntime({
   repository,
   client,
@@ -49,6 +58,12 @@ export function createBuyerDiscoveryRuntime({
 
     start(rawInput) {
       const input = BuyerSearchInputSchema.parse(rawInput);
+      const queue = runner.getSnapshot();
+
+      if (queue.queuedRunIds.length >= config.queue.maxQueuedSearches) {
+        throw new BuyerSearchQueueFullError(config.queue.maxQueuedSearches);
+      }
+
       const run = repository.createSearchRun(input, {
         now: now(),
         createId,
@@ -87,6 +102,13 @@ export function readBuyerDiscoveryConfig(env = process.env) {
       retryBaseDelayMs: nonNegativeInteger(env.BUYER_SEARCH_RETRY_BASE_MS, 500, "BUYER_SEARCH_RETRY_BASE_MS"),
       timeoutMs: positiveInteger(env.BUYER_SEARCH_TIMEOUT_MS, 120_000, "BUYER_SEARCH_TIMEOUT_MS"),
       ...(maximumCost === undefined ? {} : { maxCostUsd: maximumCost }),
+    },
+    queue: {
+      maxQueuedSearches: positiveInteger(
+        env.BUYER_SEARCH_MAX_QUEUED,
+        10,
+        "BUYER_SEARCH_MAX_QUEUED",
+      ),
     },
     promptVersions: {
       planner: BUYER_PLANNER_PROMPT_VERSION,

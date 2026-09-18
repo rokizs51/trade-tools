@@ -104,6 +104,7 @@ export function createSqliteBuyerRepository(dbPath) {
           status = ?,
           plan_json = ?,
           model_config_json = ?,
+          outcome_json = ?,
           current_stage = ?,
           progress_current = ?,
           progress_total = ?,
@@ -120,6 +121,7 @@ export function createSqliteBuyerRepository(dbPath) {
         nextStatus,
         changes.plan === undefined ? nullableJson(current.plan) : nullableJson(changes.plan),
         JSON.stringify(changes.modelConfig ?? current.modelConfig),
+        changes.outcome === undefined ? nullableJson(current.outcome) : nullableJson(changes.outcome),
         currentStage,
         changes.progressCurrent ?? current.progress.current,
         changes.progressTotal ?? current.progress.total,
@@ -405,6 +407,7 @@ function createSchema(db) {
       input_json TEXT NOT NULL,
       plan_json TEXT,
       model_config_json TEXT NOT NULL,
+      outcome_json TEXT,
       current_stage TEXT NOT NULL,
       progress_current INTEGER NOT NULL DEFAULT 0 CHECK (progress_current >= 0),
       progress_total INTEGER NOT NULL DEFAULT 0 CHECK (progress_total >= 0),
@@ -491,6 +494,16 @@ function createSchema(db) {
     CREATE INDEX IF NOT EXISTS buyer_contacts_company_idx
       ON buyer_contacts(company_id);
   `);
+
+  ensureColumn(db, "buyer_search_runs", "outcome_json", "TEXT");
+}
+
+function ensureColumn(db, tableName, columnName, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+
+  if (!columns.some((column) => column.name === columnName)) {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition};`);
+  }
 }
 
 function rowToSearchRun(row) {
@@ -504,6 +517,7 @@ function rowToSearchRun(row) {
     input: JSON.parse(row.input_json),
     plan: row.plan_json ? JSON.parse(row.plan_json) : null,
     modelConfig: JSON.parse(row.model_config_json),
+    outcome: row.outcome_json ? JSON.parse(row.outcome_json) : null,
     currentStage: row.current_stage,
     progress: { current: row.progress_current, total: row.progress_total },
     usage: {
@@ -670,7 +684,11 @@ function hydrateMatch(db, row) {
   }));
 
   const contacts = db.prepare(`
-    SELECT * FROM buyer_contacts WHERE company_id = ? ORDER BY contact_type ASC, value ASC
+    SELECT buyer_contacts.*, buyer_sources.url AS source_url
+    FROM buyer_contacts
+    JOIN buyer_sources ON buyer_sources.id = buyer_contacts.source_id
+    WHERE buyer_contacts.company_id = ?
+    ORDER BY buyer_contacts.contact_type ASC, buyer_contacts.value ASC
   `).all(row.company_id).map((contact) => ({
     id: contact.id,
     sourceId: contact.source_id,
@@ -678,6 +696,7 @@ function hydrateMatch(db, row) {
     value: contact.value,
     label: contact.label,
     isPublicBusinessContact: contact.is_public_business_contact === 1,
+    sourceUrl: contact.source_url,
     createdAt: contact.created_at,
     updatedAt: contact.updated_at,
   }));

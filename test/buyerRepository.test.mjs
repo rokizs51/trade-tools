@@ -128,6 +128,18 @@ test("buyer repository enforces lifecycle transitions and records progress", () 
       () => repository.transitionSearchRun("run-1", "COMPLETED", { now: "2026-09-17T07:03:00.000Z" }),
       InvalidSearchRunTransitionError,
     );
+
+    repository.transitionSearchRun("run-1", "RESEARCHING", { now: "2026-09-17T07:03:00.000Z" });
+    repository.transitionSearchRun("run-1", "VERIFYING", { now: "2026-09-17T07:04:00.000Z" });
+    const saving = repository.transitionSearchRun("run-1", "SAVING", {
+      now: "2026-09-17T07:05:00.000Z",
+      outcome: {
+        summary: { researchedCandidateCount: 3, savedCandidateCount: 1, rejectedCandidateCount: 2 },
+        decisions: [{ companyName: "Rejected Co", isEligible: false, rejectionReasons: ["Missing buyer-role evidence."] }],
+      },
+    });
+    assert.equal(saving.outcome.summary.researchedCandidateCount, 3);
+    assert.equal(saving.outcome.decisions[0].companyName, "Rejected Co");
   });
 });
 
