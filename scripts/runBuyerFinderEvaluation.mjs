@@ -117,39 +117,7 @@ async function runFixture(configuration, fixture) {
       usage: completed?.usage ?? { inputTokens: 0, outputTokens: 0, estimatedCostUsd: "0" },
       summary: completed?.outcome?.summary ?? null,
       modelConfig: completed?.modelConfig ?? null,
-      candidates: results.map((result, index) => ({
-        rank: index + 1,
-        matchId: result.id,
-        companyName: result.company.name,
-        websiteUrl: result.company.websiteUrl ?? null,
-        confidence: result.confidence,
-        sourceCount: result.sources.length,
-        contactCount: result.contacts.length,
-        sourcedContactCount: result.contacts.filter((contact) => Boolean(contact.sourceUrl)).length,
-        sources: result.sources.map((source) => ({
-          url: source.url,
-          title: source.title,
-          evidenceType: source.evidenceType,
-          excerpt: source.excerpt ?? null,
-        })),
-        contacts: result.contacts.map((contact) => ({
-          type: contact.type,
-          value: contact.value,
-          sourceUrl: contact.sourceUrl,
-        })),
-        review: {
-          relevant: null,
-          correctCountry: null,
-          buyerRoleSupported: null,
-          commodityRelationshipSupported: null,
-          companyIdentityEstablished: null,
-          contactSourceValid: result.contacts.length === 0 ? "NOT_PRESENT" : null,
-          officialWebsiteIdentified: null,
-          duplicate: null,
-          unsupportedClaim: null,
-          notes: "",
-        },
-      })),
+      candidates: buildReviewCandidates(results),
     };
   } catch (error) {
     return {
@@ -202,4 +170,90 @@ function fileTimestamp(isoTimestamp) {
 
 function safeErrorMessage(error) {
   return error instanceof Error ? error.message : "Buyer evaluation run failed.";
+}
+
+function buildReviewCandidates(results) {
+  const companies = new Map();
+
+  for (const result of results) {
+    const key = result.company.id || `${result.company.name.toLowerCase()}|${result.company.countryName}`;
+    const existing = companies.get(key);
+
+    if (!existing) {
+      companies.set(key, {
+        matchIds: [result.id],
+        company: result.company,
+        buyerTypes: new Set([result.buyerType]),
+        commodityRelationships: new Set([result.commodityRelationship]),
+        confidence: result.confidence,
+        verificationStatuses: new Set([result.verificationStatus]),
+        sources: new Map(result.sources.map((source) => [sourceKey(source), source])),
+        contacts: new Map(result.contacts.map((contact) => [contactKey(contact), contact])),
+      });
+      continue;
+    }
+
+    existing.matchIds.push(result.id);
+    existing.buyerTypes.add(result.buyerType);
+    existing.commodityRelationships.add(result.commodityRelationship);
+    existing.verificationStatuses.add(result.verificationStatus);
+    if (result.confidence.score > existing.confidence.score) existing.confidence = result.confidence;
+    for (const source of result.sources) existing.sources.set(sourceKey(source), source);
+    for (const contact of result.contacts) existing.contacts.set(contactKey(contact), contact);
+  }
+
+  return [...companies.values()].map((entry, index) => {
+    const sources = [...entry.sources.values()];
+    const contacts = [...entry.contacts.values()];
+    return {
+      rank: index + 1,
+      matchIds: entry.matchIds,
+      companyName: entry.company.name,
+      company: {
+        websiteUrl: entry.company.websiteUrl ?? null,
+        countryCode: entry.company.countryCode ?? null,
+        countryName: entry.company.countryName,
+        city: entry.company.city ?? null,
+        address: entry.company.address ?? null,
+      },
+      buyerTypes: [...entry.buyerTypes],
+      commodityRelationships: [...entry.commodityRelationships],
+      verificationStatuses: [...entry.verificationStatuses],
+      confidence: entry.confidence,
+      sourceCount: sources.length,
+      contactCount: contacts.length,
+      sourcedContactCount: contacts.filter((contact) => Boolean(contact.sourceUrl)).length,
+      sources: sources.map((source) => ({
+        url: source.url,
+        title: source.title,
+        evidenceType: source.evidenceType,
+        excerpt: source.excerpt ?? null,
+      })),
+      contacts: contacts.map((contact) => ({
+        type: contact.type,
+        value: contact.value,
+        sourceUrl: contact.sourceUrl,
+      })),
+      review: {
+        relevant: null,
+        correctCountry: null,
+        buyerRoleSupported: null,
+        commodityRelationshipSupported: null,
+        companyIdentityEstablished: null,
+        contactSourceValid: contacts.length === 0 ? "NOT_PRESENT" : null,
+        officialWebsiteIdentified: null,
+        duplicate: null,
+        unsupportedClaim: null,
+        notes: "",
+      },
+    };
+  });
+}
+
+function sourceKey(source) {
+  return `${source.url}|${source.evidenceType}`;
+}
+
+function contactKey(contact) {
+  return `${contact.type}|${contact.value}|${contact.sourceUrl}`;
 }

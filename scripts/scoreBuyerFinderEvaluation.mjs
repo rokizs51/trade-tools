@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
+import { extname, resolve } from "node:path";
 
 import {
   evaluateBuyerReleaseThresholds,
@@ -34,26 +34,34 @@ if (!inputPath) {
     };
   });
 
-  console.log(JSON.stringify({
+  const scoredReport = {
     schemaVersion: 1,
     sourceEvaluation: resolve(inputPath),
     scoredAt: new Date().toISOString(),
     failedRunCount: report.runs.length - completedRuns.length,
     configurations,
-  }, null, 2));
+  };
+  const resolvedInput = resolve(inputPath);
+  const outputPath = resolve(
+    process.argv[3] || `${resolvedInput.slice(0, -extname(resolvedInput).length)}.scored.json`,
+  );
+  writeFileSync(outputPath, `${JSON.stringify(scoredReport, null, 2)}\n`, "utf8");
+  console.log(JSON.stringify(scoredReport, null, 2));
+  console.error(`Scored evaluation written to ${outputPath}`);
 }
 
 function toAssessment(run) {
+  const candidates = uniqueCompanyCandidates(run.candidates);
   return {
     fixtureId: run.fixtureId,
     configurationId: run.configurationId,
     requestedLimit: run.input.resultLimit,
-    returnedCandidateCount: run.candidates.length,
+    returnedCandidateCount: candidates.length,
     latencyMs: run.latencyMs,
     inputTokens: run.usage.inputTokens,
     outputTokens: run.usage.outputTokens,
     estimatedCostUsd: Number(run.usage.estimatedCostUsd),
-    candidates: run.candidates.map((candidate) => ({
+    candidates: candidates.map((candidate) => ({
       rank: candidate.rank,
       companyName: candidate.companyName,
       sourceCount: candidate.sourceCount,
@@ -86,4 +94,15 @@ function requiredEnum(candidate, field, allowed) {
     throw new Error(`${candidate.companyName}: review.${field} must be one of ${allowed.join(", ")}.`);
   }
   return value;
+}
+
+function uniqueCompanyCandidates(candidates) {
+  const unique = new Map();
+
+  for (const candidate of candidates) {
+    const key = candidate.companyName.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ");
+    if (!unique.has(key)) unique.set(key, candidate);
+  }
+
+  return [...unique.values()].map((candidate, index) => ({ ...candidate, rank: index + 1 }));
 }

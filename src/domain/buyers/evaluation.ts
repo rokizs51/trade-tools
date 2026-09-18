@@ -59,6 +59,7 @@ export interface BuyerEvaluationThresholdResult {
     targetCountryAccuracy: boolean;
     sourceCoverage: boolean;
     contactProvenance: boolean;
+    contactAccuracy: boolean;
     unsupportedClaimRate: boolean;
     duplicateRate: boolean;
   };
@@ -69,6 +70,7 @@ const RELEASE_THRESHOLDS = {
   targetCountryAccuracy: 0.95,
   sourceCoverage: 1,
   contactProvenance: 1,
+  contactAccuracy: 1,
   unsupportedClaimRate: 0,
   duplicateRateExclusiveMaximum: 0.05,
 } as const;
@@ -136,6 +138,7 @@ export function evaluateBuyerReleaseThresholds(
     ),
     sourceCoverage: meetsMinimum(metrics.sourceCoverage, RELEASE_THRESHOLDS.sourceCoverage),
     contactProvenance: meetsMinimum(metrics.contactProvenance, RELEASE_THRESHOLDS.contactProvenance),
+    contactAccuracy: meetsMinimum(metrics.contactAccuracy, RELEASE_THRESHOLDS.contactAccuracy),
     unsupportedClaimRate: metrics.unsupportedClaimRate === RELEASE_THRESHOLDS.unsupportedClaimRate,
     duplicateRate:
       metrics.duplicateRate !== null &&

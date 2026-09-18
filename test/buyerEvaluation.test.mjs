@@ -90,6 +90,7 @@ test("buyer evaluation release checks enforce the documented thresholds", () => 
       targetCountryAccuracy: true,
       sourceCoverage: true,
       contactProvenance: true,
+      contactAccuracy: true,
       unsupportedClaimRate: true,
       duplicateRate: true,
     },

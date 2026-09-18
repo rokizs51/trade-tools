@@ -65,6 +65,7 @@ Calculate:
 - At least 95% match the requested country.
 - Every result contains at least one retained source.
 - Every displayed contact maps to a retained source.
+- Every reviewed contact value is confirmed by its cited public source.
 - No fabricated email address or phone number.
 - Duplicate rate remains below 5% after deterministic normalization.
 
@@ -110,7 +111,8 @@ npm run buyer:eval -- --confirm-live
 
 The command runs each selected fixture once per configuration and writes a review JSON file under
 `data/buyer-evaluations/`. Reports contain public research results and telemetry but never the API
-key. The directory is ignored by Git.
+key. Multiple buyer-role matches for the same stored company are consolidated into one review
+candidate so precision and duplicate metrics operate at company level. The directory is ignored by Git.
 
 Complete every `candidate.review` field using the rubric above, then score the file:
 
@@ -119,7 +121,35 @@ npm run buyer:eval:score -- data/buyer-evaluations/<evaluation-file>.json
 ```
 
 The scorer refuses partial candidate reviews. Its JSON output compares quality, evidence, latency,
-token usage, and cost, and evaluates the documented release thresholds for each configuration.
+token usage, and cost, and evaluates the documented release thresholds for each configuration. It
+also saves a sibling `.scored.json` report next to the reviewed input.
+
+## Pilot Comparison — 2026-09-18
+
+The first guarded pilot compared the existing baseline with `openai/gpt-5-mini` as formatter and
+verifier. Both configurations kept `google/gemini-3.5-flash-lite` for planning and
+`openai/gpt-4.1-mini` for web research. The pilot used `coconut-uae-importers` and
+`niche-low-evidence`, for four paid runs total.
+
+| Metric | Baseline | GPT-5 Mini candidate |
+|---|---:|---:|
+| Reviewed companies | 3 | 2 |
+| Relevant companies | 3 | 0 |
+| Precision | 100% | 0% |
+| Unsupported-claim rate | 0% | 100% |
+| Median latency | 69.5 s | 42.7 s |
+| Total cost | $0.07975 | $0.07093 |
+| Low-evidence Iceland results | 0 | 0 |
+
+The candidate was approximately 38% faster by median latency and 11% cheaper in this limited sample,
+but it failed the core relevance threshold. One candidate matched general dry-coconut products rather
+than semi-husked coconut; the other showed semi-husked coconut supply but did not substantiate an
+importer or distributor role. Keep the current baseline configuration. Do not promote the candidate
+or spend on a full 24-run comparison with this configuration.
+
+The baseline also requires follow-up contact validation: one official page timed out during human
+review, leaving its contact values unconfirmed. Therefore this pilot selects the better configuration
+but does not complete the full Milestone 6 quality gate.
 
 ## Hardening Included In Milestone 6
 
