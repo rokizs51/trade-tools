@@ -208,14 +208,13 @@ export function createPostgresBuyerRepository(sql) {
 
     async getBuyerMatch(id) {
       const rows = await baseMatchQuery(sql, sql`m.id = ${id}`);
-      return rows[0] ? hydrateMatch(sql, rows[0]) : undefined;
+      if (!rows[0]) return undefined;
+      return hydrateMatches(rows)[0];
     },
 
     async getSearchResults(searchRunId) {
       const rows = await baseMatchQuery(sql, sql`m.search_run_id = ${searchRunId}`);
-      const matches = [];
-      for (const row of rows) matches.push(await hydrateMatch(sql, row));
-      return matches;
+      return hydrateMatches(rows);
     },
 
     async updateMatchReviewStatus(id, reviewStatus, now) {
@@ -244,51 +243,79 @@ async function getSearchRun(sql, id, forUpdate = false) {
 async function baseMatchQuery(sql, condition) {
   return sql`
     select m.*, c.name as company_name, c.normalized_name, c.website_url,
-      c.website_domain, c.country_code, c.country_name, c.city, c.address
+      c.website_domain, c.country_code, c.country_name, c.city, c.address,
+      bs.id as source_id, bs.url as source_url, bs.normalized_url as source_normalized_url,
+      bs.title as source_title, bs.publisher as source_publisher,
+      bs.evidence_type as source_evidence_type, bs.excerpt as source_excerpt,
+      bs.retrieved_at as source_retrieved_at,
+      bc.id as contact_id, bc.source_id as contact_source_id,
+      bc.contact_type, bc.value as contact_value, bc.label as contact_label,
+      bc.is_public_business_contact, bc.created_at as contact_created_at,
+      bc.updated_at as contact_updated_at, contact_source.url as contact_source_url
     from public.buyer_matches m
     join public.buyer_companies c on c.id = m.company_id
+    left join public.buyer_sources bs on bs.buyer_match_id = m.id
+    left join public.buyer_contacts bc on bc.company_id = m.company_id
+    left join public.buyer_sources contact_source on contact_source.id = bc.source_id
     where ${condition}
-    order by m.confidence_score desc, c.name asc
+    order by m.confidence_score desc, c.name asc,
+      bs.retrieved_at desc nulls last, bs.id asc,
+      bc.contact_type asc nulls last, bc.value asc nulls last
   `;
 }
 
-async function hydrateMatch(sql, row) {
-  const sources = await sql`
-    select * from public.buyer_sources where buyer_match_id = ${row.id}
-    order by retrieved_at desc, id asc
-  `;
-  const contacts = await sql`
-    select bc.*, bs.url as source_url
-    from public.buyer_contacts bc
-    join public.buyer_sources bs on bs.id = bc.source_id
-    where bc.company_id = ${row.company_id}
-    order by bc.contact_type asc, bc.value asc
-  `;
-  return {
-    id: row.id, searchRunId: row.search_run_id,
-    company: {
-      id: row.company_id, name: row.company_name, normalizedName: row.normalized_name,
-      websiteUrl: row.website_url, websiteDomain: row.website_domain,
-      countryCode: row.country_code, countryName: row.country_name, city: row.city, address: row.address,
-    },
-    commodity: row.commodity, buyerType: row.buyer_type,
-    commodityRelationship: row.commodity_relationship,
-    confidence: { score: row.confidence_score, level: row.confidence_level },
-    verificationStatus: row.verification_status, reviewStatus: row.review_status,
-    rejectionReason: row.rejection_reason, reviewedAt: nullableIso(row.reviewed_at),
-    createdAt: isoValue(row.created_at), updatedAt: isoValue(row.updated_at),
-    sources: sources.map((source) => ({
-      id: source.id, url: source.url, normalizedUrl: source.normalized_url,
-      title: source.title, publisher: source.publisher, evidenceType: source.evidence_type,
-      excerpt: source.excerpt, retrievedAt: isoValue(source.retrieved_at),
-    })),
-    contacts: contacts.map((contact) => ({
-      id: contact.id, sourceId: contact.source_id, type: contact.contact_type,
-      value: contact.value, label: contact.label,
-      isPublicBusinessContact: contact.is_public_business_contact,
-      sourceUrl: contact.source_url, createdAt: isoValue(contact.created_at), updatedAt: isoValue(contact.updated_at),
-    })),
-  };
+function hydrateMatches(rows) {
+  const matches = new Map();
+  const sourceIdsByMatch = new Map();
+  const contactIdsByMatch = new Map();
+
+  for (const row of rows) {
+    let match = matches.get(row.id);
+    if (!match) {
+      match = {
+        id: row.id, searchRunId: row.search_run_id,
+        company: {
+          id: row.company_id, name: row.company_name, normalizedName: row.normalized_name,
+          websiteUrl: row.website_url, websiteDomain: row.website_domain,
+          countryCode: row.country_code, countryName: row.country_name, city: row.city, address: row.address,
+        },
+        commodity: row.commodity, buyerType: row.buyer_type,
+        commodityRelationship: row.commodity_relationship,
+        confidence: { score: row.confidence_score, level: row.confidence_level },
+        verificationStatus: row.verification_status, reviewStatus: row.review_status,
+        rejectionReason: row.rejection_reason, reviewedAt: nullableIso(row.reviewed_at),
+        createdAt: isoValue(row.created_at), updatedAt: isoValue(row.updated_at),
+        sources: [], contacts: [],
+      };
+      matches.set(row.id, match);
+      sourceIdsByMatch.set(row.id, new Set());
+      contactIdsByMatch.set(row.id, new Set());
+    }
+
+    const sourceIds = sourceIdsByMatch.get(row.id);
+    if (row.source_id && !sourceIds.has(row.source_id)) {
+      sourceIds.add(row.source_id);
+      match.sources.push({
+        id: row.source_id, url: row.source_url, normalizedUrl: row.source_normalized_url,
+        title: row.source_title, publisher: row.source_publisher, evidenceType: row.source_evidence_type,
+        excerpt: row.source_excerpt, retrievedAt: isoValue(row.source_retrieved_at),
+      });
+    }
+
+    const contactIds = contactIdsByMatch.get(row.id);
+    if (row.contact_id && !contactIds.has(row.contact_id)) {
+      contactIds.add(row.contact_id);
+      match.contacts.push({
+        id: row.contact_id, sourceId: row.contact_source_id, type: row.contact_type,
+        value: row.contact_value, label: row.contact_label,
+        isPublicBusinessContact: row.is_public_business_contact,
+        sourceUrl: row.contact_source_url,
+        createdAt: isoValue(row.contact_created_at), updatedAt: isoValue(row.contact_updated_at),
+      });
+    }
+  }
+
+  return [...matches.values()];
 }
 
 function rowToSearchRun(row) {

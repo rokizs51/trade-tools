@@ -16,7 +16,16 @@ export function readPostgresConfig(env = process.env) {
   return {
     connectionString,
     poolMode,
-    maxConnections: positiveInteger(env.DATABASE_MAX_CONNECTIONS, poolMode === "transaction" ? 1 : 5),
+    maxConnections: positiveInteger(
+      env.DATABASE_MAX_CONNECTIONS,
+      poolMode === "transaction" ? 1 : 5,
+      "DATABASE_MAX_CONNECTIONS",
+    ),
+    idleTimeoutSeconds: positiveInteger(
+      env.DATABASE_IDLE_TIMEOUT_SECONDS,
+      poolMode === "transaction" ? 20 : 300,
+      "DATABASE_IDLE_TIMEOUT_SECONDS",
+    ),
   };
 }
 
@@ -27,16 +36,16 @@ export function createPostgresClient(env = process.env) {
     max: config.maxConnections,
     prepare: config.poolMode !== "transaction",
     ssl: "require",
-    idle_timeout: 20,
+    idle_timeout: config.idleTimeoutSeconds,
     connect_timeout: 15,
   });
 }
 
-function positiveInteger(value, fallback) {
+function positiveInteger(value, fallback, name) {
   const parsed = value === undefined || value === "" ? fallback : Number(value);
 
   if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new Error("DATABASE_MAX_CONNECTIONS must be a positive integer.");
+    throw new Error(`${name} must be a positive integer.`);
   }
 
   return parsed;

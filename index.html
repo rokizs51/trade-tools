@@ -16,7 +16,29 @@
     <link rel="stylesheet" href="./src/styles.css" />
   </head>
   <body>
-    <main class="shell">
+    <main id="auth-shell" class="auth-shell" hidden>
+      <section class="panel auth-card" aria-labelledby="auth-title">
+        <div>
+          <p class="eyebrow">Trade Tools</p>
+          <h1 id="auth-title">Sign in</h1>
+          <p class="summary-text">Use your invited internal account to continue.</p>
+        </div>
+        <form id="auth-login-form" class="auth-form">
+          <label>
+            <span>Email</span>
+            <input id="auth-email" name="email" type="email" autocomplete="username" required />
+          </label>
+          <label>
+            <span>Password</span>
+            <input id="auth-password" name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button id="auth-submit" class="text-button" type="submit">Sign in</button>
+          <p id="auth-error" class="error-message" role="alert"></p>
+        </form>
+      </section>
+    </main>
+
+    <main id="application-shell" class="shell" hidden>
       <header class="app-header">
         <div>
           <p class="eyebrow">Trade Tools</p>
@@ -28,6 +50,10 @@
             <button id="show-load-tool" class="view-button" type="button">Load calculator</button>
             <button id="show-buyer-tool" class="view-button" type="button">Buyer finder</button>
           </nav>
+          <div class="auth-user-actions">
+            <span id="auth-user"></span>
+            <button id="auth-sign-out" class="text-button secondary-button" type="button">Sign out</button>
+          </div>
         </div>
       </header>
 
@@ -710,6 +736,7 @@
       </section>
     </main>
 
+    <script src="/auth/config.js"></script>
     <script type="module" src="./dist/app.js"></script>
   </body>
 </html>

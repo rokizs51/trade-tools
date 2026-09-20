@@ -1275,30 +1275,172 @@ Implementation note:
 
 Status:
 
-In progress as of 2026-09-18. Supabase Postgres persistence, schema migrations, a SQLite data-import
-path, server-side connection configuration, and locked-down browser-role grants are implemented.
-Staging verification, authentication, per-user/workspace authorization and budgets, HTTP rate
-limiting, and durable multi-process job execution remain outstanding.
+In progress as of 2026-09-20. The production persistence foundation is implemented: Supabase
+Postgres, versioned schema migrations, a non-destructive SQLite data-import path, server-side
+connection configuration, enabled Row Level Security, and revoked browser-role table grants.
+
+The remaining work is now split into explicit delivery phases below. Performance hardening is first
+because moving the database from the local process to a remote Supabase region exposed unnecessary
+round trips and connection latency. Authentication alone is not sufficient: every repository query
+must also be scoped to a workspace before the application is exposed beyond a trusted machine.
 
 Goal:
 
 Prepare for access beyond a trusted local machine.
 
-Tasks:
+#### Architecture Decision
 
-- Add authentication and authorization.
-- Add per-user or per-workspace budgets.
-- Add request rate limiting.
-- Move secrets to deployment secret management.
-- Review retention and deletion policy.
-- Use Supabase Postgres for production persistence while retaining SQLite for local development and tests.
-- Move jobs to a durable worker if multiple processes are introduced.
+Keep the existing server-owned data-access boundary:
+
+```text
+Browser -> Node API -> Supabase Postgres
+```
+
+- Use Supabase Auth for user identity and session management.
+- Send the signed-in user's access token to the Node API on every protected request.
+- Verify Supabase-issued tokens on the server with the supported claims/JWKS flow; do not implement
+  custom JWT cryptography.
+- Build the request authorization context from trusted server data: `userId`, `workspaceId`, and
+  `role`.
+- Keep `DATABASE_URL`, Supabase secret keys, and service-role credentials server-only. Only the
+  project URL and publishable key may be present in browser configuration.
+- Continue to revoke direct table access from `anon` and `authenticated`. RLS remains enabled as
+  defense in depth, but application-layer authorization is mandatory because trusted direct
+  Postgres connections do not automatically inherit the end user's Supabase Auth context.
+- Do not move repository access into the browser during this milestone.
+
+#### Phase 7.1: Supabase Performance Hardening
+
+Status: completed as of 2026-09-20. Calculator startup no longer preloads history, costing and load
+active/archive views share one cached request, mutations refresh each resource once, Buyer Finder
+result hydration uses one joined query, and session connections remain warm for five minutes by
+default. The Jakarta-to-Sydney verification measured approximately 269-274 ms warm list medians and
+a 285 ms median for hydrating six Buyer Finder results. Cold connection setup remains approximately
+three seconds and is documented as a region-distance limitation.
+
+- Record cold and warm latency baselines for costing, load-plan, and buyer endpoints.
+- Load only the active workspace on application startup.
+- Remove duplicate costing and load-plan list requests.
+- Replace per-result Buyer Finder hydration queries with batched queries or joins.
+- Tune the Postgres connection lifetime, pool size, and pool mode for the deployment topology.
+- Add query-count or equivalent regression coverage for high-traffic list and detail paths.
+- Re-measure after optimization before deciding whether the database must be migrated from Sydney
+  to a closer Supabase region.
+- Document the accepted latency envelope and remaining region-related limitations.
+
+#### Phase 7.2: Supabase Authentication
+
+Status: completed as of 2026-09-20. The application now has an invite-only sign-in
+interface, persisted and refreshed browser sessions, authenticated API requests, server-side JWT
+verification through JWKS with a legacy-token fallback, sign-out, expired-session recovery, and
+tests for missing, malformed, valid, and expired tokens. Public signup is disabled, the first internal
+user was created, and sign-in was confirmed against the live project.
+
+- Configure invite-only internal authentication; unrestricted public sign-up remains disabled.
+- Implement sign-in, sign-out, session restoration, token refresh, and expired-session handling.
+- Require a verified access token for every `/api/*` endpoint except an explicit health endpoint.
+- Return `401 Unauthorized` for missing or invalid sessions.
+- Keep the Supabase publishable key separate from server-only database and secret credentials.
+- Add tests covering anonymous denial, valid sessions, expired tokens, and malformed tokens.
+
+#### Phase 7.3: Workspace Authorization And Roles
+
+Status: deferred for the current invite-only, single-team internal deployment. Authentication remains
+required, but all invited users intentionally share the same application data. Revisit this phase
+before supporting multiple organizations, teams that should not share records, or less-trusted users.
+
+- Add `workspaces` and `workspace_members` tables.
+- Support only the PRD roles `ADMIN` and `USER`; do not introduce a larger permission system.
+- Add `workspace_id` and `created_by` ownership to costings, load plans, and buyer search runs.
+- Scope buyer companies, matches, sources, contacts, and review actions so data cannot cross a
+  workspace boundary.
+- Backfill imported and existing rows into one explicit default workspace before making ownership
+  columns mandatory.
+- Update repository interfaces so every read and mutation receives a trusted authorization context.
+- Include `workspace_id` in lookup, update, archive, and delete predicates; never authorize a record
+  only because its ID is known.
+- Add workspace-leading indexes for common filters and ordering, including active/archive history.
+- Return `403 Forbidden` when an authenticated user lacks membership or permission.
+- Add negative integration tests proving that one workspace cannot read or mutate another
+  workspace's records, including guessed record IDs.
+
+#### Phase 7.4: Buyer Search Budgets And Rate Limits
+
+- Add configurable monthly workspace budgets and optional per-user limits.
+- Persist search usage and estimated/final cost against the requesting user and workspace.
+- Reserve budget atomically before enqueueing a search so concurrent requests cannot overspend the
+  same remaining allowance.
+- Reconcile the reservation with final usage after success, failure, cancellation, or timeout.
+- Add per-user and per-IP HTTP rate limiting for the Node API.
+- Apply a stricter creation and concurrency limit to paid Buyer Finder searches.
+- Treat Supabase Auth endpoint limits as separate protection; they do not rate-limit this
+  application's Node API.
+- Return `429 Too Many Requests` with retry guidance when a limit is reached.
+
+#### Phase 7.5: Durable Job Execution And Recovery
+
+- Keep the existing single-process runner only while production is intentionally limited to one
+  application/worker process.
+- For a single-process deployment, document startup interruption handling and provide an explicit,
+  idempotent retry path for interrupted runs.
+- Before enabling multiple API or worker processes, move queue state to a durable Postgres-backed
+  mechanism. Prefer Supabase Queues (`pgmq`) unless deployment testing identifies a blocker.
+- Add job leases or visibility timeouts, heartbeats, bounded retries, and idempotent completion.
+- Ensure a worker crash cannot silently lose a paid search or cause duplicate persisted results.
+- Keep queue operations server-only; do not expose queue functions to browser roles.
+
+#### Phase 7.6: Staging, Secrets, Retention, And Operations
+
+- Create a separate staging Supabase project and apply every migration from an empty database.
+- Rehearse the SQLite import and verify record counts and representative records.
+- Run authenticated API smoke tests and workspace-isolation tests against staging.
+- Store production secrets in deployment secret management and confirm they are absent from browser
+  bundles, logs, source control, and committed environment files.
+- Define retention and deletion behavior for search runs, source excerpts, public contacts, usage
+  records, and queue archives.
+- Ensure workspace deletion has an explicit cascade, anonymization, or retention decision.
+- Review Supabase Security Advisor and Performance Advisor findings before cutover.
+- Enable SSL enforcement and database network restrictions where the hosting topology supports a
+  stable allowlist.
+- Define backup/restore expectations and determine whether the production recovery target requires
+  Point-in-Time Recovery.
+- Add production monitoring for API errors, authentication failures, database latency, search-job
+  failures, queue depth, and budget consumption.
+- Retain SQLite only for local development and fast tests; production and staging use Supabase
+  Postgres.
 
 Definition of Done:
 
-- The buyer API is not anonymously accessible.
-- Users cannot exceed configured budgets.
-- Production jobs have an explicit recovery strategy.
+- Performance baselines exist, unnecessary database round trips are removed, and the accepted warm
+  latency envelope is documented.
+- Every protected API endpoint rejects anonymous requests with `401`.
+- Authenticated users can access only records belonging to a workspace of which they are a member.
+- `ADMIN` and `USER` permissions match the PRD and have positive and negative tests.
+- Existing Supabase records are assigned to the intended default workspace.
+- Users and workspaces cannot exceed configured Buyer Finder budgets, including under concurrent
+  requests.
+- API and paid-search rate limits return `429` without starting extra work.
+- Production jobs have a tested recovery strategy; multi-process deployments use a durable queue.
+- No server database credential, service-role credential, or other secret is shipped to the browser.
+- Retention, deletion, backup, and restore expectations are documented.
+- All migrations apply cleanly to staging from an empty database, and the staging smoke suite passes.
+- Supabase Security Advisor and Performance Advisor have no unresolved critical findings.
+- Build passes.
+- Tests pass.
+- Lint passes if a lint script exists; otherwise lint remains documented as not configured.
+
+Implementation order:
+
+1. Phase 7.1: Supabase performance hardening.
+2. Phase 7.2: Supabase authentication.
+3. Phase 7.3: Workspace authorization and roles.
+4. Phase 7.4: Buyer search budgets and rate limits.
+5. Phase 7.5: Durable job execution and recovery.
+6. Phase 7.6: Staging and production operations.
+
+The current invite-only deployment may remain at Phase 7.2 only while every user is trusted and is
+intended to share every application record. Complete Phase 7.3 before enabling public signup,
+supporting multiple organizations, or introducing users who require separate data boundaries.
 
 ## 25. Recommended Build Order
 

@@ -30,6 +30,7 @@ import {
 } from "./domain/load/index.js";
 import { LoadViewer, type CameraPreset, type ContainerDisplayMode } from "./loadViewer.js";
 import { BuyerFinderUi } from "./buyerFinderUi.js";
+import { authenticatedFetch, initializeAuthentication } from "./auth.js";
 import {
   defaultWorkspaceRoute,
   formatWorkspaceHash,
@@ -123,6 +124,10 @@ let activeSubview: ToolSubview = "calculator";
 let currentLoadPlanId: string | undefined;
 let currentLoadResult: PackingResult | undefined;
 let currentLoadComparisons: PackingResult[] = [];
+let persistedCostingsCache: SavedCosting[] | undefined;
+let persistedCostingsRequest: Promise<SavedCosting[]> | undefined;
+let persistedLoadPlansCache: SavedLoadPlan[] | undefined;
+let persistedLoadPlansRequest: Promise<SavedLoadPlan[]> | undefined;
 const maxViewerCartons = 5000;
 
 for (const cost of standardCosts) {
@@ -172,17 +177,17 @@ for (const button of cameraPresetButtons) {
   });
 }
 
-void renderHistory();
-void renderArchived();
-void renderLoadPlans();
-void renderArchivedLoadPlans();
-updateSaveButtonLabel();
-updateLoadSaveButtonLabel();
-updateLoadCostingButtonState();
-render();
-renderEmptyLoadResult();
-const initialWorkspace = parseWorkspaceHash(window.location.hash) ?? defaultWorkspaceRoute;
-setWorkspace(initialWorkspace.tool, initialWorkspace.subview, "replace");
+void initializeAuthentication(initializeApplication);
+
+function initializeApplication(): void {
+  updateSaveButtonLabel();
+  updateLoadSaveButtonLabel();
+  updateLoadCostingButtonState();
+  render();
+  renderEmptyLoadResult();
+  const initialWorkspace = parseWorkspaceHash(window.location.hash) ?? defaultWorkspaceRoute;
+  setWorkspace(initialWorkspace.tool, initialWorkspace.subview, "replace");
+}
 
 async function handleSaveCosting(): Promise<void> {
   try {
@@ -190,8 +195,7 @@ async function handleSaveCosting(): Promise<void> {
     const isExistingCosting = Boolean(currentCostingId);
     const saved = await persistCosting(draft, currentCostingId);
     currentCostingId = saved.id;
-    await renderHistory();
-    await renderArchived();
+    await refreshCostingLists();
     updateSaveButtonLabel();
     setText("save-status", `${isExistingCosting ? "Updated" : "Saved"} ${saved.name}.`);
     render();
@@ -215,8 +219,6 @@ async function handleNewCosting(): Promise<void> {
   setInputValue("target-markup", "");
   setInputValue("buyer-offer", "");
   replaceCostRows(standardCosts);
-  await renderHistory();
-  await renderArchived();
   updateSaveButtonLabel();
   setText("save-status", "New costing ready.");
   render();
@@ -247,8 +249,7 @@ async function handleHistoryAction(event: MouseEvent): Promise<void> {
   if (!saved) {
     setText("save-status", "");
     setText("error-message", "Saved costing could not be found.");
-    await renderHistory();
-    await renderArchived();
+    await refreshCostingLists();
     return;
   }
 
@@ -281,8 +282,7 @@ async function handleHistoryAction(event: MouseEvent): Promise<void> {
       currentCostingId = undefined;
     }
 
-    await renderHistory();
-    await renderArchived();
+    await refreshCostingLists();
     updateSaveButtonLabel();
     setText("save-status", `Archived ${saved.name}.`);
     setWorkspace("costing", "saved");
@@ -302,8 +302,7 @@ async function handleHistoryAction(event: MouseEvent): Promise<void> {
       currentCostingId = undefined;
     }
 
-    await renderHistory();
-    await renderArchived();
+    await refreshCostingLists();
     updateSaveButtonLabel();
     setText("save-status", `Deleted ${saved.name}.`);
   }
@@ -713,7 +712,11 @@ function costItemToRowState(cost: CostItem, index: number): CostRowState {
 }
 
 async function renderHistory(): Promise<void> {
-  const savedCostings = await listPersistedCostings("ACTIVE");
+  renderHistoryRows(await listPersistedCostings());
+}
+
+function renderHistoryRows(costings: SavedCosting[]): void {
+  const savedCostings = costings.filter((costing) => costing.status === "ACTIVE");
   historyRows.replaceChildren();
   historyEmpty.hidden = savedCostings.length > 0;
 
@@ -723,13 +726,23 @@ async function renderHistory(): Promise<void> {
 }
 
 async function renderArchived(): Promise<void> {
-  const savedCostings = await listPersistedCostings("ARCHIVED");
+  renderArchivedRows(await listPersistedCostings());
+}
+
+function renderArchivedRows(costings: SavedCosting[]): void {
+  const savedCostings = costings.filter((costing) => costing.status === "ARCHIVED");
   archiveRows.replaceChildren();
   archiveEmpty.hidden = savedCostings.length > 0;
 
   for (const costing of savedCostings) {
     archiveRows.appendChild(createHistoryRow(costing, "archived"));
   }
+}
+
+async function refreshCostingLists(): Promise<void> {
+  const costings = await listPersistedCostings(true);
+  renderHistoryRows(costings);
+  renderArchivedRows(costings);
 }
 
 function createHistoryRow(costing: SavedCosting, mode: "active" | "archived"): HTMLTableRowElement {
@@ -973,7 +986,7 @@ async function handleSaveLoadPlan(): Promise<void> {
     const saved = await persistLoadPlan(buildLoadPlanDraft(), currentLoadPlanId);
     currentLoadPlanId = saved.id;
     applySavedLoadPlan(saved);
-    await renderLoadPlans();
+    await refreshLoadPlanLists();
     updateLoadSaveButtonLabel();
     setLoadPlanStatus(`${isExistingLoadPlan ? "Updated" : "Saved"} ${saved.name}.`);
   } catch (error) {
@@ -1000,7 +1013,6 @@ async function handleNewLoadPlan(): Promise<void> {
   setInputValue("load-mode", "FLOOR_LOADED");
   clearLoadFieldErrors();
   renderEmptyLoadResult();
-  await renderLoadPlans();
   setText("load-error-message", "");
   setLoadPlanStatus("New load plan ready.");
   setWorkspace("load", "calculator");
@@ -1205,7 +1217,11 @@ function selectLoadComparison(containerId: string): void {
 }
 
 async function renderLoadPlans(): Promise<void> {
-  const loadPlans = await listPersistedLoadPlans("ACTIVE");
+  renderLoadPlanRows(await listPersistedLoadPlans());
+}
+
+function renderLoadPlanRows(plans: SavedLoadPlan[]): void {
+  const loadPlans = plans.filter((loadPlan) => loadPlan.status === "ACTIVE");
   loadPlanRows.replaceChildren();
   loadPlansEmpty.hidden = loadPlans.length > 0;
 
@@ -1215,13 +1231,23 @@ async function renderLoadPlans(): Promise<void> {
 }
 
 async function renderArchivedLoadPlans(): Promise<void> {
-  const loadPlans = await listPersistedLoadPlans("ARCHIVED");
+  renderArchivedLoadPlanRows(await listPersistedLoadPlans());
+}
+
+function renderArchivedLoadPlanRows(plans: SavedLoadPlan[]): void {
+  const loadPlans = plans.filter((loadPlan) => loadPlan.status === "ARCHIVED");
   loadArchiveRows.replaceChildren();
   loadArchiveEmpty.hidden = loadPlans.length > 0;
 
   for (const loadPlan of loadPlans) {
     loadArchiveRows.appendChild(createLoadPlanRow(loadPlan, "archived"));
   }
+}
+
+async function refreshLoadPlanLists(): Promise<void> {
+  const loadPlans = await listPersistedLoadPlans(true);
+  renderLoadPlanRows(loadPlans);
+  renderArchivedLoadPlanRows(loadPlans);
 }
 
 function createLoadPlanRow(loadPlan: SavedLoadPlan, mode: "active" | "archived"): HTMLTableRowElement {
@@ -1297,7 +1323,7 @@ async function handleLoadPlanAction(event: MouseEvent): Promise<void> {
   const saved = await fetchLoadPlan(id);
 
   if (!saved) {
-    await renderLoadPlans();
+    await refreshLoadPlanLists();
     setLoadPlanStatus("");
     setText("load-error-message", "Saved load plan could not be found.");
     return;
@@ -1329,8 +1355,7 @@ async function handleLoadPlanAction(event: MouseEvent): Promise<void> {
       updateLoadSaveButtonLabel();
     }
 
-    await renderLoadPlans();
-    await renderArchivedLoadPlans();
+    await refreshLoadPlanLists();
     setLoadPlanStatus(`Archived ${saved.name}.`);
     setWorkspace("load", "saved");
     return;
@@ -1350,8 +1375,7 @@ async function handleLoadPlanAction(event: MouseEvent): Promise<void> {
       updateLoadSaveButtonLabel();
     }
 
-    await renderLoadPlans();
-    await renderArchivedLoadPlans();
+    await refreshLoadPlanLists();
     setLoadPlanStatus(`Deleted ${saved.name}.`);
   }
 }
@@ -1492,14 +1516,32 @@ function markLoadFieldsInvalid(fieldName: string): void {
   }
 }
 
-async function listPersistedCostings(status: SavedCosting["status"]): Promise<SavedCosting[]> {
-  const response = await fetch("/api/costings");
-  const costings = await parseJsonResponse<SavedCosting[]>(response);
-  return costings.filter((costing) => costing.status === status);
+async function listPersistedCostings(refresh = false): Promise<SavedCosting[]> {
+  if (refresh) {
+    persistedCostingsCache = undefined;
+  }
+
+  if (persistedCostingsCache) {
+    return persistedCostingsCache;
+  }
+
+  if (!persistedCostingsRequest) {
+    persistedCostingsRequest = authenticatedFetch("/api/costings")
+      .then((response) => parseJsonResponse<SavedCosting[]>(response))
+      .then((costings) => {
+        persistedCostingsCache = costings;
+        return costings;
+      })
+      .finally(() => {
+        persistedCostingsRequest = undefined;
+      });
+  }
+
+  return persistedCostingsRequest;
 }
 
 async function fetchCosting(id: string): Promise<SavedCosting | undefined> {
-  const response = await fetch(`/api/costings/${encodeURIComponent(id)}`);
+  const response = await authenticatedFetch(`/api/costings/${encodeURIComponent(id)}`);
 
   if (response.status === 404) {
     return undefined;
@@ -1509,7 +1551,7 @@ async function fetchCosting(id: string): Promise<SavedCosting | undefined> {
 }
 
 async function persistCosting(draft: CostingDraft, existingId?: string): Promise<SavedCosting> {
-  const response = await fetch(existingId ? `/api/costings/${encodeURIComponent(existingId)}` : "/api/costings", {
+  const response = await authenticatedFetch(existingId ? `/api/costings/${encodeURIComponent(existingId)}` : "/api/costings", {
     method: existingId ? "PUT" : "POST",
     headers: {
       "content-type": "application/json",
@@ -1521,7 +1563,7 @@ async function persistCosting(draft: CostingDraft, existingId?: string): Promise
 }
 
 async function archivePersistedCosting(id: string): Promise<SavedCosting> {
-  const response = await fetch(`/api/costings/${encodeURIComponent(id)}/archive`, {
+  const response = await authenticatedFetch(`/api/costings/${encodeURIComponent(id)}/archive`, {
     method: "POST",
   });
 
@@ -1529,21 +1571,39 @@ async function archivePersistedCosting(id: string): Promise<SavedCosting> {
 }
 
 async function deletePersistedCosting(id: string): Promise<void> {
-  const response = await fetch(`/api/costings/${encodeURIComponent(id)}`, {
+  const response = await authenticatedFetch(`/api/costings/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
 
   await parseJsonResponse<{ deleted: true }>(response);
 }
 
-async function listPersistedLoadPlans(status: SavedLoadPlan["status"]): Promise<SavedLoadPlan[]> {
-  const response = await fetch("/api/load-plans");
-  const loadPlans = await parseJsonResponse<SavedLoadPlan[]>(response);
-  return loadPlans.filter((loadPlan) => loadPlan.status === status);
+async function listPersistedLoadPlans(refresh = false): Promise<SavedLoadPlan[]> {
+  if (refresh) {
+    persistedLoadPlansCache = undefined;
+  }
+
+  if (persistedLoadPlansCache) {
+    return persistedLoadPlansCache;
+  }
+
+  if (!persistedLoadPlansRequest) {
+    persistedLoadPlansRequest = authenticatedFetch("/api/load-plans")
+      .then((response) => parseJsonResponse<SavedLoadPlan[]>(response))
+      .then((loadPlans) => {
+        persistedLoadPlansCache = loadPlans;
+        return loadPlans;
+      })
+      .finally(() => {
+        persistedLoadPlansRequest = undefined;
+      });
+  }
+
+  return persistedLoadPlansRequest;
 }
 
 async function fetchLoadPlan(id: string): Promise<SavedLoadPlan | undefined> {
-  const response = await fetch(`/api/load-plans/${encodeURIComponent(id)}`);
+  const response = await authenticatedFetch(`/api/load-plans/${encodeURIComponent(id)}`);
 
   if (response.status === 404) {
     return undefined;
@@ -1553,7 +1613,7 @@ async function fetchLoadPlan(id: string): Promise<SavedLoadPlan | undefined> {
 }
 
 async function persistLoadPlan(draft: LoadPlanDraft, existingId?: string): Promise<SavedLoadPlan> {
-  const response = await fetch(existingId ? `/api/load-plans/${encodeURIComponent(existingId)}` : "/api/load-plans", {
+  const response = await authenticatedFetch(existingId ? `/api/load-plans/${encodeURIComponent(existingId)}` : "/api/load-plans", {
     method: existingId ? "PUT" : "POST",
     headers: {
       "content-type": "application/json",
@@ -1565,7 +1625,7 @@ async function persistLoadPlan(draft: LoadPlanDraft, existingId?: string): Promi
 }
 
 async function deletePersistedLoadPlan(id: string): Promise<void> {
-  const response = await fetch(`/api/load-plans/${encodeURIComponent(id)}`, {
+  const response = await authenticatedFetch(`/api/load-plans/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
 
@@ -1573,7 +1633,7 @@ async function deletePersistedLoadPlan(id: string): Promise<void> {
 }
 
 async function archivePersistedLoadPlan(id: string): Promise<SavedLoadPlan> {
-  const response = await fetch(`/api/load-plans/${encodeURIComponent(id)}/archive`, {
+  const response = await authenticatedFetch(`/api/load-plans/${encodeURIComponent(id)}/archive`, {
     method: "POST",
   });
 

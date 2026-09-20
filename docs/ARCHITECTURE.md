@@ -16,7 +16,10 @@ Validation:
 Zod
 
 Authentication:
-Not implemented yet; planned as the next production-readiness step
+Supabase Auth with invite-only users. The browser manages the Supabase session and sends the access
+token to the Node API. The Node server verifies asymmetric JWTs through the project's JWKS endpoint
+and falls back to the Supabase Auth user endpoint for legacy HS256 tokens. Supabase Postgres cannot
+start with authentication disabled. Workspace authorization is the next deployment-readiness phase.
 
 Principles:
 - Financial calculations use decimal arithmetic.
@@ -26,3 +29,5 @@ Principles:
 - UI complexity should remain hidden by default.
 - Database credentials remain server-side.
 - Supabase browser roles have no direct table access until explicit authenticated policies are designed.
+- Authentication establishes identity only; repository-level workspace authorization remains a future
+  requirement if the tool expands beyond one trusted internal team.

@@ -21,6 +21,45 @@ body {
   font-family: var(--font-body);
 }
 
+.auth-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  width: min(100% - 32px, 440px);
+  margin: 0 auto;
+  padding: var(--space-xl) 0;
+}
+
+.auth-card {
+  display: grid;
+  gap: var(--space-lg);
+  width: 100%;
+}
+
+.auth-form {
+  display: grid;
+  gap: var(--space-md);
+}
+
+.auth-form label {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.auth-form .text-button {
+  width: 100%;
+}
+
+.auth-user-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  width: 100%;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
 button,
 input,
 select,

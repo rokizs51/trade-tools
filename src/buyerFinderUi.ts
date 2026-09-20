@@ -1,3 +1,5 @@
+import { authenticatedFetch } from "./auth.js";
+
 export type BuyerSubview = "calculator" | "saved" | "archived";
 
 type BuyerType = "IMPORTER" | "DISTRIBUTOR" | "WHOLESALER" | "PROCESSOR" | "MANUFACTURER" | "RETAILER";
@@ -686,7 +688,7 @@ function createSavedBuyerCard(result: BuyerResult): HTMLElement {
 }
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
+  const response = await authenticatedFetch(path, init);
   const body = await response.json() as T | ApiErrorBody;
   if (!response.ok) {
     const apiError = body as ApiErrorBody;

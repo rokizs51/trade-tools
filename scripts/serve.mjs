@@ -5,10 +5,19 @@ import { extname, join, normalize, resolve } from "node:path";
 import { createBuyerDiscoveryRuntime } from "./buyerDiscoveryRuntime.mjs";
 import { createBuyerApiHandler } from "./buyerApi.mjs";
 import { createPersistence } from "./persistence.mjs";
+import {
+  AuthenticationError,
+  createBrowserAuthConfig,
+  createRequestAuthenticator,
+  readAuthConfig,
+} from "./supabaseAuth.mjs";
 
 const root = process.cwd();
 const port = Number(process.env.PORT ?? 4173);
 const persistence = createPersistence({ root });
+const authConfig = readAuthConfig(process.env, persistence.provider);
+const authenticateRequest = createRequestAuthenticator(authConfig);
+const browserAuthConfig = createBrowserAuthConfig(authConfig);
 const repository = persistence.costingRepository;
 const loadPlanRepository = persistence.loadPlanRepository;
 const buyerRepository = persistence.buyerRepository;
@@ -30,7 +39,33 @@ const contentTypes = {
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://localhost:${port}`);
 
+  if (request.method === "GET" && url.pathname === "/health") {
+    sendJson(response, 200, { status: "ok" });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/auth/config.js") {
+    sendBrowserAuthConfig(response, browserAuthConfig);
+    return;
+  }
+
   if (url.pathname.startsWith("/api/")) {
+    let identity;
+    try {
+      identity = await authenticateRequest(request);
+    } catch (error) {
+      if (error instanceof AuthenticationError) {
+        sendJson(response, 401, { error: { code: error.code, message: error.message } });
+        return;
+      }
+      throw error;
+    }
+
+    request.auth = identity;
+    if (request.method === "GET" && url.pathname === "/api/session") {
+      sendJson(response, 200, { user: identity });
+      return;
+    }
     await handleApiRequest(request, response, url);
     return;
   }
@@ -55,6 +90,7 @@ server.listen(port, () => {
   console.log(persistence.provider === "postgres"
     ? "Database: Supabase Postgres"
     : `SQLite database: ${persistence.databasePath}`);
+  console.log(authConfig.mode === "supabase" ? "Authentication: Supabase Auth" : "Authentication: disabled for local SQLite");
 
   if (interruptedBuyerSearches > 0) {
     console.log(`Recovered ${interruptedBuyerSearches} interrupted buyer search(es).`);
@@ -62,8 +98,20 @@ server.listen(port, () => {
 });
 
 function sendJson(response, statusCode, body) {
-  response.writeHead(statusCode, { "content-type": "application/json; charset=utf-8" });
+  response.writeHead(statusCode, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+  });
   response.end(JSON.stringify(body));
+}
+
+function sendBrowserAuthConfig(response, config) {
+  const serialized = JSON.stringify(config).replaceAll("<", "\\u003c");
+  response.writeHead(200, {
+    "content-type": "text/javascript; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  response.end(`window.__TRADE_TOOLS_AUTH_CONFIG__ = Object.freeze(${serialized});`);
 }
 
 async function handleApiRequest(request, response, url) {
