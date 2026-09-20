@@ -100,10 +100,10 @@ async function runFixture(configuration, fixture) {
         BUYER_VERIFIER_MODEL: configuration.models.verifier,
       },
     });
-    const queued = runtime.start(fixture.input);
+    const queued = await runtime.start(fixture.input);
     await runtime.onIdle();
-    const completed = repository.getSearchRun(queued.id);
-    const results = repository.getSearchResults(queued.id);
+    const completed = await repository.getSearchRun(queued.id);
+    const results = await repository.getSearchResults(queued.id);
 
     return {
       fixtureId: fixture.id,

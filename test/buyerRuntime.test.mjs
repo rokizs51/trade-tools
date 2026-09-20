@@ -66,7 +66,7 @@ test("buyer runtime composes the queue, orchestrator, repository, and injected m
       now: () => "2026-09-17T08:00:00.000Z",
       createId: () => `runtime-${++id}`,
     });
-    const created = runtime.start({
+    const created = await runtime.start({
       commodity: "Coconut",
       targetCountry: "United Arab Emirates",
       buyerTypes: ["IMPORTER"],
@@ -130,18 +130,18 @@ test("buyer runtime bounds the waiting queue before creating another search run"
       buyerTypes: ["IMPORTER"],
       resultLimit: 10,
     };
-    const running = runtime.start(searchInput);
+    const running = await runtime.start(searchInput);
     await started;
-    const queued = runtime.start(searchInput);
+    const queued = await runtime.start(searchInput);
 
-    assert.throws(
-      () => runtime.start(searchInput),
+    await assert.rejects(
+      runtime.start(searchInput),
       (error) => error.code === "BUYER_SEARCH_QUEUE_FULL",
     );
     assert.equal(repository.listSearchRuns().length, 2);
 
-    assert.equal(runtime.cancel(running.id), true);
-    assert.equal(runtime.cancel(queued.id), true);
+    assert.equal(await runtime.cancel(running.id), true);
+    assert.equal(await runtime.cancel(queued.id), true);
     await runtime.onIdle();
   } finally {
     repository.close();

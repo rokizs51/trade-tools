@@ -54,14 +54,14 @@ export interface BuyerDiscoveryLimits {
 interface BuyerSearchJobContext {
   runId: string;
   signal: AbortSignal;
-  transition(status: SearchRunStatus, changes?: Record<string, unknown>): unknown;
-  updateProgress(progress: { current: number; total: number; stage?: string }): unknown;
+  transition(status: SearchRunStatus, changes?: Record<string, unknown>): unknown | Promise<unknown>;
+  updateProgress(progress: { current: number; total: number; stage?: string }): unknown | Promise<unknown>;
   updateTelemetry(telemetry: {
     inputTokens: number;
     outputTokens: number;
     estimatedCostUsd: string;
     modelConfig: Record<string, unknown>;
-  }): unknown;
+  }): unknown | Promise<unknown>;
 }
 
 interface BuyerPersistenceRepository {
@@ -69,7 +69,7 @@ interface BuyerPersistenceRepository {
     searchRunId: string,
     bundle: Record<string, unknown>,
     options: { now: string; createId: () => string },
-  ): unknown;
+  ): unknown | Promise<unknown>;
 }
 
 export interface BuyerDiscoveryOrchestratorOptions {
@@ -127,25 +127,30 @@ export function createBuyerDiscoveryOrchestrator(options: BuyerDiscoveryOrchestr
       const runSignal = createRunSignal(job.signal, options.limits.timeoutMs);
       const telemetry = createTelemetryTracker(options.models, options.limits.maxCostUsd);
 
-      function record(stage: CallRecord["stage"], metadata: ModelCallMetadata): void {
-        if (telemetry.record(stage, metadata)) {
-          job.updateTelemetry(telemetry.snapshot());
-          telemetry.assertBudget();
-        }
+      function record(stage: CallRecord["stage"], metadata: ModelCallMetadata): boolean {
+        const changed = telemetry.record(stage, metadata);
+        telemetry.assertBudget();
+        return changed;
+      }
+
+      async function recordAndPersist(stage: CallRecord["stage"], metadata: ModelCallMetadata): Promise<void> {
+        const changed = telemetry.record(stage, metadata);
+        if (changed) await job.updateTelemetry(telemetry.snapshot());
+        telemetry.assertBudget();
       }
 
       try {
-        job.updateProgress({ current: 0, total: 1, stage: "Preparing search" });
+        await job.updateProgress({ current: 0, total: 1, stage: "Preparing search" });
         const planResult = await planner.plan(input, runSignal.signal);
         const plan = enforcePlanInvariants(input, planResult.data);
-        record("PLANNER", planResult.metadata);
-        job.updateProgress({ current: 1, total: 1, stage: "Preparing search" });
-        job.transition("RESEARCHING", {
+        await recordAndPersist("PLANNER", planResult.metadata);
+        await job.updateProgress({ current: 1, total: 1, stage: "Preparing search" });
+        await job.transition("RESEARCHING", {
           plan,
           modelConfig: telemetry.snapshot().modelConfig,
         });
 
-        job.updateProgress({ current: 0, total: 1, stage: "Searching sources" });
+        await job.updateProgress({ current: 0, total: 1, stage: "Searching sources" });
         const retrievedAt = now();
         let completedSearch: ResearchSearchResult | undefined;
         const researchResult = await withBuyerDiscoveryRetry(
@@ -160,9 +165,9 @@ export function createBuyerDiscoveryOrchestrator(options: BuyerDiscoveryOrchestr
           }),
           retryOptions(options, runSignal.signal),
         );
-        record("RESEARCH_SEARCH", researchResult.searchMetadata);
-        record("RESEARCH_FORMATTING", researchResult.formattingMetadata);
-        job.updateProgress({ current: 1, total: 1, stage: "Searching sources" });
+        await recordAndPersist("RESEARCH_SEARCH", researchResult.searchMetadata);
+        await recordAndPersist("RESEARCH_FORMATTING", researchResult.formattingMetadata);
+        await job.updateProgress({ current: 1, total: 1, stage: "Searching sources" });
 
         const grounding = retainGroundedCandidates(
           researchResult.data.candidates.slice(0, options.limits.maxRawCandidates),
@@ -171,7 +176,7 @@ export function createBuyerDiscoveryOrchestrator(options: BuyerDiscoveryOrchestr
         );
         const deduplicated = deduplicateBuyerCandidates(grounding.candidates);
         const candidates = rankCandidatesForVerification(deduplicated.candidates).slice(0, input.resultLimit);
-        job.transition("VERIFYING", {
+        await job.transition("VERIFYING", {
           progressCurrent: 0,
           progressTotal: candidates.length,
           modelConfig: telemetry.snapshot().modelConfig,
@@ -192,7 +197,7 @@ export function createBuyerDiscoveryOrchestrator(options: BuyerDiscoveryOrchestr
               () => verifier.verify(input, candidate, runSignal.signal),
               retryOptions(options, runSignal.signal),
             );
-            record("VERIFIER", verificationResult.metadata);
+            await recordAndPersist("VERIFIER", verificationResult.metadata);
 
             const verification = enforceDeterministicRequirements(
               input,
@@ -215,7 +220,7 @@ export function createBuyerDiscoveryOrchestrator(options: BuyerDiscoveryOrchestr
               const buyerTypes = candidate.buyerTypes.filter((type) => input.buyerTypes.includes(type));
 
               for (const buyerType of buyerTypes) {
-                options.repository.saveCandidateBundle(job.runId, {
+                await options.repository.saveCandidateBundle(job.runId, {
                   company: {
                     name: candidate.companyName,
                     websiteUrl: candidate.websiteUrl,
@@ -248,7 +253,7 @@ export function createBuyerDiscoveryOrchestrator(options: BuyerDiscoveryOrchestr
               rejectedCandidateCount += 1;
             }
 
-            job.updateProgress({
+            await job.updateProgress({
               current: verifiedCandidateCount,
               total: candidates.length,
               stage: "Verifying candidates",
@@ -268,7 +273,7 @@ export function createBuyerDiscoveryOrchestrator(options: BuyerDiscoveryOrchestr
           savedMatchCount,
         };
 
-        job.transition("SAVING", {
+        await job.transition("SAVING", {
           progressCurrent: verifiedCandidateCount,
           progressTotal: candidates.length,
           modelConfig: telemetry.snapshot().modelConfig,

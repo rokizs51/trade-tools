@@ -207,7 +207,7 @@ async function withHarness({ client, limits = defaultLimits(), afterEnqueue, sea
   });
 
   try {
-    runner.enqueue("run-1");
+    await runner.enqueue("run-1");
     await afterEnqueue?.({ repository, runner });
     await runner.onIdle();
     await run({ repository, summary, runner });
@@ -485,7 +485,7 @@ test("orchestrator forwards user cancellation to an active model request", async
     limits: defaultLimits({ maxRetries: 0 }),
     async afterEnqueue({ runner }) {
       await researchStarted;
-      assert.equal(runner.cancel("run-1"), true);
+      assert.equal(await runner.cancel("run-1"), true);
     },
   }, async ({ repository }) => {
     assert.equal(signalObserved, true);

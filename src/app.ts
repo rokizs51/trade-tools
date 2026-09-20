@@ -30,6 +30,13 @@ import {
 } from "./domain/load/index.js";
 import { LoadViewer, type CameraPreset, type ContainerDisplayMode } from "./loadViewer.js";
 import { BuyerFinderUi } from "./buyerFinderUi.js";
+import {
+  defaultWorkspaceRoute,
+  formatWorkspaceHash,
+  parseWorkspaceHash,
+  type ToolName,
+  type ToolSubview,
+} from "./workspaceRoute.js";
 
 type CostRowState = {
   id: string;
@@ -42,8 +49,7 @@ type CostRowState = {
 };
 
 type PricingMode = PricingInput["type"];
-type ToolName = "costing" | "load" | "buyer";
-type ToolSubview = "calculator" | "saved" | "archived";
+type WorkspaceNavigation = "push" | "replace" | "none";
 
 const stageOrder: Record<CostStage, number> = {
   EXW: 0,
@@ -157,6 +163,8 @@ loadComparisonRows.addEventListener("click", handleLoadComparisonClick);
 loadComparisonRows.addEventListener("keydown", handleLoadComparisonKeydown);
 loadPlanRows.addEventListener("click", handleLoadPlanAction);
 loadArchiveRows.addEventListener("click", handleLoadPlanAction);
+window.addEventListener("popstate", handleWorkspaceLocationChange);
+window.addEventListener("hashchange", handleWorkspaceLocationChange);
 
 for (const button of cameraPresetButtons) {
   button.addEventListener("click", () => {
@@ -173,7 +181,8 @@ updateLoadSaveButtonLabel();
 updateLoadCostingButtonState();
 render();
 renderEmptyLoadResult();
-setWorkspace("costing", "calculator");
+const initialWorkspace = parseWorkspaceHash(window.location.hash) ?? defaultWorkspaceRoute;
+setWorkspace(initialWorkspace.tool, initialWorkspace.subview, "replace");
 
 async function handleSaveCosting(): Promise<void> {
   try {
@@ -791,9 +800,14 @@ function getHistoryButtonClassName(action: string): string {
   return "table-button";
 }
 
-function setWorkspace(tool: ToolName, subview: ToolSubview): void {
+function setWorkspace(
+  tool: ToolName,
+  subview: ToolSubview,
+  navigation: WorkspaceNavigation = "push",
+): void {
   activeTool = tool;
   activeSubview = subview;
+  updateWorkspaceLocation(tool, subview, navigation);
 
   const showCostingCalculator = tool === "costing" && subview === "calculator";
   const showCostingSaved = tool === "costing" && subview === "saved";
@@ -844,6 +858,43 @@ function setWorkspace(tool: ToolName, subview: ToolSubview): void {
 
   if (showLoadCalculator) {
     loadViewer.resize();
+  }
+}
+
+function handleWorkspaceLocationChange(): void {
+  const route = parseWorkspaceHash(window.location.hash);
+
+  if (!route) {
+    setWorkspace(defaultWorkspaceRoute.tool, defaultWorkspaceRoute.subview, "replace");
+    return;
+  }
+
+  if (route.tool === activeTool && route.subview === activeSubview) {
+    return;
+  }
+
+  setWorkspace(route.tool, route.subview, "none");
+}
+
+function updateWorkspaceLocation(
+  tool: ToolName,
+  subview: ToolSubview,
+  navigation: WorkspaceNavigation,
+): void {
+  if (navigation === "none") {
+    return;
+  }
+
+  const nextHash = formatWorkspaceHash({ tool, subview });
+
+  if (window.location.hash === nextHash) {
+    return;
+  }
+
+  if (navigation === "replace") {
+    window.history.replaceState(null, "", nextHash);
+  } else {
+    window.history.pushState(null, "", nextHash);
   }
 }
 

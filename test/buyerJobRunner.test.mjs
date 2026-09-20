@@ -47,16 +47,16 @@ test("job runner executes one search at a time and completes valid lifecycles", 
         active += 1;
         maximumActive = Math.max(maximumActive, active);
         await Promise.resolve();
-        job.transition("RESEARCHING");
-        job.transition("VERIFYING");
-        job.updateProgress({ current: 1, total: 1 });
-        job.transition("SAVING");
+        await job.transition("RESEARCHING");
+        await job.transition("VERIFYING");
+        await job.updateProgress({ current: 1, total: 1 });
+        await job.transition("SAVING");
         active -= 1;
       },
     });
 
-    assert.equal(runner.enqueue("run-1"), true);
-    assert.equal(runner.enqueue("run-2"), true);
+    assert.equal(await runner.enqueue("run-1"), true);
+    assert.equal(await runner.enqueue("run-2"), true);
     await runner.onIdle();
 
     assert.equal(maximumActive, 1);
@@ -67,16 +67,30 @@ test("job runner executes one search at a time and completes valid lifecycles", 
 
 test("job runner cancels queued searches without executing them", async () => {
   await withRepository(async (repository) => {
+    createRun(repository, "blocker");
     createRun(repository, "run-1");
     let executions = 0;
+    let releaseBlocker;
+    const blocker = new Promise((resolve) => { releaseBlocker = resolve; });
     const runner = createBuyerSearchJobRunner({
       repository,
       recoverStaleRuns: false,
-      execute: async () => { executions += 1; },
+      execute: async (job) => {
+        if (job.runId === "blocker") {
+          await blocker;
+          await job.transition("RESEARCHING");
+          await job.transition("VERIFYING");
+          await job.transition("SAVING");
+          return;
+        }
+        executions += 1;
+      },
     });
 
-    runner.enqueue("run-1");
-    assert.equal(runner.cancel("run-1"), true);
+    await runner.enqueue("blocker");
+    await runner.enqueue("run-1");
+    assert.equal(await runner.cancel("run-1"), true);
+    releaseBlocker();
     await runner.onIdle();
 
     assert.equal(executions, 0);
@@ -98,9 +112,9 @@ test("job runner aborts and cancels a running search", async () => {
       }),
     });
 
-    runner.enqueue("run-1");
+    await runner.enqueue("run-1");
     await didStart;
-    assert.equal(runner.cancel("run-1"), true);
+    assert.equal(await runner.cancel("run-1"), true);
     await runner.onIdle();
 
     assert.equal(repository.getSearchRun("run-1").status, "CANCELLED");
@@ -120,14 +134,14 @@ test("job runner records worker failures without blocking the next job", async (
           throw new Error("Upstream unavailable");
         }
 
-        job.transition("RESEARCHING");
-        job.transition("VERIFYING");
-        job.transition("SAVING");
+        await job.transition("RESEARCHING");
+        await job.transition("VERIFYING");
+        await job.transition("SAVING");
       },
     });
 
-    runner.enqueue("failed-run");
-    runner.enqueue("next-run");
+    await runner.enqueue("failed-run");
+    await runner.enqueue("next-run");
     await runner.onIdle();
 
     assert.equal(repository.getSearchRun("failed-run").status, "FAILED");
@@ -139,12 +153,13 @@ test("job runner records worker failures without blocking the next job", async (
 test("job runner recovery interrupts stale runs when it starts", async () => {
   await withRepository(async (repository) => {
     createRun(repository, "stale-run");
-    createBuyerSearchJobRunner({
+    const runner = createBuyerSearchJobRunner({
       repository,
       now: () => "2026-09-17T12:00:00.000Z",
       execute: async () => {},
     });
 
+    await runner.onIdle();
     assert.equal(repository.getSearchRun("stale-run").status, "INTERRUPTED");
   });
 });

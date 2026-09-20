@@ -11,9 +11,9 @@ export function createBuyerSearchJobRunner({
     throw new RangeError("Buyer search job concurrency must be a positive integer.");
   }
 
-  if (recoverStaleRuns) {
-    repository.interruptStaleSearchRuns(now());
-  }
+  const ready = recoverStaleRuns
+    ? Promise.resolve(repository.interruptStaleSearchRuns(now()))
+    : Promise.resolve();
 
   const queue = [];
   const queuedIds = new Set();
@@ -21,8 +21,9 @@ export function createBuyerSearchJobRunner({
   const idleWaiters = new Set();
   let pumpScheduled = false;
 
-  function enqueue(runId) {
-    const run = repository.getSearchRun(runId);
+  async function enqueue(runId) {
+    await ready;
+    const run = await repository.getSearchRun(runId);
 
     if (!run) {
       throw new Error(`Cannot queue missing buyer search run ${runId}.`);
@@ -42,8 +43,9 @@ export function createBuyerSearchJobRunner({
     return true;
   }
 
-  function cancel(runId) {
-    const run = repository.getSearchRun(runId);
+  async function cancel(runId) {
+    await ready;
+    const run = await repository.getSearchRun(runId);
 
     if (!run || isTerminalSearchRunStatus(run.status)) {
       return false;
@@ -56,7 +58,7 @@ export function createBuyerSearchJobRunner({
         queue.splice(index, 1);
       }
 
-      repository.transitionSearchRun(runId, "CANCELLED", {
+      await repository.transitionSearchRun(runId, "CANCELLED", {
         now: now(),
         errorCode: "CANCELLED_BY_USER",
         errorMessage: "The buyer search was cancelled before it started.",
@@ -71,7 +73,7 @@ export function createBuyerSearchJobRunner({
       return false;
     }
 
-    repository.transitionSearchRun(runId, "CANCELLED", {
+    await repository.transitionSearchRun(runId, "CANCELLED", {
       now: now(),
       errorCode: "CANCELLED_BY_USER",
       errorMessage: "The buyer search was cancelled by the user.",
@@ -80,9 +82,11 @@ export function createBuyerSearchJobRunner({
     return true;
   }
 
-  function onIdle() {
+  async function onIdle() {
+    await ready;
+
     if (queue.length === 0 && running.size === 0) {
-      return Promise.resolve();
+      return;
     }
 
     return new Promise((resolve) => idleWaiters.add(resolve));
@@ -122,7 +126,7 @@ export function createBuyerSearchJobRunner({
 
   async function executeJob(runId, controller) {
     try {
-      repository.transitionSearchRun(runId, "PLANNING", { now: now() });
+      await repository.transitionSearchRun(runId, "PLANNING", { now: now() });
 
       const context = {
         runId,
@@ -138,27 +142,27 @@ export function createBuyerSearchJobRunner({
 
       await execute(context);
 
-      const run = repository.getSearchRun(runId);
+      const run = await repository.getSearchRun(runId);
 
       if (!run || isTerminalSearchRunStatus(run.status)) {
         return;
       }
 
       if (run.status === "SAVING") {
-        repository.transitionSearchRun(runId, "COMPLETED", { now: now() });
+        await repository.transitionSearchRun(runId, "COMPLETED", { now: now() });
         return;
       }
 
-      repository.transitionSearchRun(runId, "FAILED", {
+      await repository.transitionSearchRun(runId, "FAILED", {
         now: now(),
         errorCode: "JOB_INCOMPLETE",
         errorMessage: `Buyer search worker stopped during ${run.status}.`,
       });
     } catch (error) {
-      const run = repository.getSearchRun(runId);
+      const run = await repository.getSearchRun(runId);
 
       if (run && !isTerminalSearchRunStatus(run.status)) {
-        repository.transitionSearchRun(runId, controller.signal.aborted ? "CANCELLED" : "FAILED", {
+        await repository.transitionSearchRun(runId, controller.signal.aborted ? "CANCELLED" : "FAILED", {
           now: now(),
           errorCode: controller.signal.aborted ? "CANCELLED_BY_USER" : safeErrorCode(error),
           errorMessage: controller.signal.aborted

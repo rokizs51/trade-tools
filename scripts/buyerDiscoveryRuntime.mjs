@@ -43,20 +43,24 @@ export function createBuyerDiscoveryRuntime({
     repository,
     now,
     execute(job) {
-      const run = repository.getSearchRun(job.runId);
+      return executeRun(job);
 
-      if (!run) {
-        throw new Error(`Buyer search run ${job.runId} disappeared before execution.`);
+      async function executeRun(job) {
+        const run = await repository.getSearchRun(job.runId);
+
+        if (!run) {
+          throw new Error(`Buyer search run ${job.runId} disappeared before execution.`);
+        }
+
+        return orchestrator.run(run.input, job);
       }
-
-      return orchestrator.run(run.input, job);
     },
   });
 
   return {
     config,
 
-    start(rawInput) {
+    async start(rawInput) {
       const input = BuyerSearchInputSchema.parse(rawInput);
       const queue = runner.getSnapshot();
 
@@ -64,7 +68,7 @@ export function createBuyerDiscoveryRuntime({
         throw new BuyerSearchQueueFullError(config.queue.maxQueuedSearches);
       }
 
-      const run = repository.createSearchRun(input, {
+      const run = await repository.createSearchRun(input, {
         now: now(),
         createId,
         modelConfig: {
@@ -72,7 +76,7 @@ export function createBuyerDiscoveryRuntime({
           promptVersions: config.promptVersions,
         },
       });
-      runner.enqueue(run.id);
+      await runner.enqueue(run.id);
       return run;
     },
 

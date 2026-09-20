@@ -8,7 +8,7 @@ import { InvalidSearchRunTransitionError } from "../dist/application/buyerDiscov
 import {
   BuyerMatchNotFoundError,
   BuyerSearchRunNotFoundError,
-} from "./sqliteBuyerRepository.mjs";
+} from "./buyerRepositoryErrors.mjs";
 
 const ReviewRequestSchema = z.object({ status: CandidateReviewStatusSchema }).strict();
 const TERMINAL_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"]);
@@ -44,13 +44,13 @@ export function createBuyerApiHandler({ repository, runtime, now = () => new Dat
         }
 
         const input = BuyerSearchInputSchema.parse(await readJsonBody(request));
-        const run = runtime.start(input);
+        const run = await runtime.start(input);
         sendJson(response, 202, { id: run.id, status: run.status });
         return true;
       }
 
       if (request.method === "GET" && url.pathname === "/api/buyer-searches") {
-        sendJson(response, 200, repository.listSearchRuns().map(toSearchListItem));
+        sendJson(response, 200, (await repository.listSearchRuns()).map(toSearchListItem));
         return true;
       }
 
@@ -61,7 +61,7 @@ export function createBuyerApiHandler({ repository, runtime, now = () => new Dat
 
       if (request.method === "GET" && resultsMatch) {
         const id = decodePathPart(resultsMatch[1]);
-        const run = repository.getSearchRun(id);
+        const run = await repository.getSearchRun(id);
 
         if (!run) {
           sendError(response, 404, "BUYER_SEARCH_NOT_FOUND", "Buyer search was not found.");
@@ -71,14 +71,14 @@ export function createBuyerApiHandler({ repository, runtime, now = () => new Dat
         sendJson(response, 200, {
           searchId: id,
           status: run.status,
-          results: repository.getSearchResults(id).map(toApiResult),
+          results: (await repository.getSearchResults(id)).map(toApiResult),
         });
         return true;
       }
 
       if (request.method === "POST" && cancelMatch) {
         const id = decodePathPart(cancelMatch[1]);
-        const run = repository.getSearchRun(id);
+        const run = await repository.getSearchRun(id);
 
         if (!run) {
           sendError(response, 404, "BUYER_SEARCH_NOT_FOUND", "Buyer search was not found.");
@@ -95,17 +95,17 @@ export function createBuyerApiHandler({ repository, runtime, now = () => new Dat
           return true;
         }
 
-        if (!runtime.cancel(id)) {
+        if (!await runtime.cancel(id)) {
           sendError(response, 409, "INVALID_SEARCH_STATE", "The buyer search is not queued or running in this process.");
           return true;
         }
 
-        sendJson(response, 200, toSearchStatus(repository.getSearchRun(id)));
+        sendJson(response, 200, toSearchStatus(await repository.getSearchRun(id)));
         return true;
       }
 
       if (request.method === "GET" && searchMatch) {
-        const run = repository.getSearchRun(decodePathPart(searchMatch[1]));
+        const run = await repository.getSearchRun(decodePathPart(searchMatch[1]));
 
         if (!run) {
           sendError(response, 404, "BUYER_SEARCH_NOT_FOUND", "Buyer search was not found.");
@@ -118,7 +118,7 @@ export function createBuyerApiHandler({ repository, runtime, now = () => new Dat
 
       if (request.method === "PATCH" && reviewMatch) {
         const body = ReviewRequestSchema.parse(await readJsonBody(request));
-        const match = repository.updateMatchReviewStatus(
+        const match = await repository.updateMatchReviewStatus(
           decodePathPart(reviewMatch[1]),
           body.status,
           now(),

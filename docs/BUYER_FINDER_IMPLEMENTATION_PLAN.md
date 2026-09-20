@@ -1273,6 +1273,13 @@ Implementation note:
 
 ### Milestone 7: Deployment Readiness
 
+Status:
+
+In progress as of 2026-09-18. Supabase Postgres persistence, schema migrations, a SQLite data-import
+path, server-side connection configuration, and locked-down browser-role grants are implemented.
+Staging verification, authentication, per-user/workspace authorization and budgets, HTTP rate
+limiting, and durable multi-process job execution remain outstanding.
+
 Goal:
 
 Prepare for access beyond a trusted local machine.
@@ -1284,7 +1291,7 @@ Tasks:
 - Add request rate limiting.
 - Move secrets to deployment secret management.
 - Review retention and deletion policy.
-- Decide whether SQLite remains suitable.
+- Use Supabase Postgres for production persistence while retaining SQLite for local development and tests.
 - Move jobs to a durable worker if multiple processes are introduced.
 
 Definition of Done:
