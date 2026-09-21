@@ -77,6 +77,7 @@ test("buyer runtime composes the queue, orchestrator, repository, and injected m
     const completed = repository.getSearchRun(created.id);
     assert.equal(completed.status, "COMPLETED");
     assert.equal(completed.modelConfig.requestedModels.formatter, "fake/formatter");
+    assert.equal(completed.modelConfig.gpt5ReasoningEffort, "low");
     assert.equal(completed.progress.total, 0);
   } finally {
     repository.close();
@@ -93,6 +94,21 @@ test("buyer runtime validates numeric environment settings", () => {
     () => readBuyerDiscoveryConfig({ BUYER_SEARCH_MAX_COST_USD: "0" }),
     /BUYER_SEARCH_MAX_COST_USD must be a positive number/,
   );
+  assert.throws(
+    () => readBuyerDiscoveryConfig({ BUYER_FALLBACK_ENABLED: "sometimes" }),
+    /BUYER_FALLBACK_ENABLED must be true or false/,
+  );
+  assert.throws(
+    () => readBuyerDiscoveryConfig({ BUYER_GPT5_REASONING_EFFORT: "minimal" }),
+    /BUYER_GPT5_REASONING_EFFORT must be low, medium, or high/,
+  );
+
+  const config = readBuyerDiscoveryConfig({});
+  assert.equal(config.gpt5ReasoningEffort, "low");
+  assert.equal(config.limits.fallbackEnabled, true);
+  assert.equal(config.limits.fallbackMinQualified, 3);
+  assert.equal(config.limits.fallbackMaxSearchCalls, 2);
+  assert.equal(config.limits.fallbackMaxCandidates, 10);
 });
 
 test("buyer runtime bounds the waiting queue before creating another search run", async () => {

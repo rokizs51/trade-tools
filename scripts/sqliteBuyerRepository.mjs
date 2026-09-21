@@ -16,7 +16,11 @@ import {
   getSearchRunStage,
   isTerminalSearchRunStatus,
 } from "../dist/application/buyerDiscovery/index.js";
-import { BuyerMatchNotFoundError, BuyerSearchRunNotFoundError } from "./buyerRepositoryErrors.mjs";
+import {
+  BuyerMatchNotFoundError,
+  BuyerSearchRunNotFoundError,
+  BuyerSearchRunNotTerminalError,
+} from "./buyerRepositoryErrors.mjs";
 
 export { BuyerMatchNotFoundError, BuyerSearchRunNotFoundError } from "./buyerRepositoryErrors.mjs";
 
@@ -70,6 +74,37 @@ export function createSqliteBuyerRepository(dbPath) {
     getSearchRun(id) {
       const row = db.prepare("SELECT * FROM buyer_search_runs WHERE id = ?").get(id);
       return row ? rowToSearchRun(row) : undefined;
+    },
+
+    deleteSearchRun(id) {
+      const run = this.getSearchRun(id);
+      if (!run) throw new BuyerSearchRunNotFoundError(id);
+      if (!isTerminalSearchRunStatus(run.status)) {
+        throw new BuyerSearchRunNotTerminalError(id, run.status);
+      }
+
+      const companyIds = db.prepare(`
+        SELECT DISTINCT company_id FROM buyer_matches WHERE search_run_id = ?
+      `).all(id).map((row) => row.company_id);
+
+      db.exec("BEGIN");
+      try {
+        db.prepare("DELETE FROM buyer_search_runs WHERE id = ?").run(id);
+        const deleteOrphan = db.prepare(`
+          DELETE FROM buyer_companies
+          WHERE id = ?
+            AND NOT EXISTS (SELECT 1 FROM buyer_matches WHERE company_id = buyer_companies.id)
+        `);
+        const orphanedCompanyCount = companyIds.reduce(
+          (count, companyId) => count + Number(deleteOrphan.run(companyId).changes),
+          0,
+        );
+        db.exec("COMMIT");
+        return { id, orphanedCompanyCount };
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
     },
 
     transitionSearchRun(id, nextStatus, changes = {}) {

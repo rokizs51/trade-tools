@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { extname, join, normalize, resolve } from "node:path";
 import { createBuyerDiscoveryRuntime } from "./buyerDiscoveryRuntime.mjs";
 import { createBuyerApiHandler } from "./buyerApi.mjs";
+import { createBuyerPipelineLogger } from "./buyerPipelineLogger.mjs";
 import { createPersistence } from "./persistence.mjs";
 import {
   AuthenticationError,
@@ -15,7 +16,7 @@ import {
 const root = process.cwd();
 const port = Number(process.env.PORT ?? 4173);
 const persistence = createPersistence({ root });
-const authConfig = readAuthConfig(process.env, persistence.provider);
+const authConfig = readAuthConfig(process.env);
 const authenticateRequest = createRequestAuthenticator(authConfig);
 const browserAuthConfig = createBrowserAuthConfig(authConfig);
 const repository = persistence.costingRepository;
@@ -23,7 +24,7 @@ const loadPlanRepository = persistence.loadPlanRepository;
 const buyerRepository = persistence.buyerRepository;
 const interruptedBuyerSearches = await buyerRepository.interruptStaleSearchRuns(new Date().toISOString());
 const buyerRuntime = process.env.OPENROUTER_API_KEY
-  ? createBuyerDiscoveryRuntime({ repository: buyerRepository })
+  ? createBuyerDiscoveryRuntime({ repository: buyerRepository, logger: createBuyerPipelineLogger() })
   : undefined;
 const handleBuyerApiRequest = createBuyerApiHandler({
   repository: buyerRepository,
@@ -87,10 +88,8 @@ const server = createServer(async (request, response) => {
 
 server.listen(port, () => {
   console.log(`Export Cost Calculator: http://localhost:${port}`);
-  console.log(persistence.provider === "postgres"
-    ? "Database: Supabase Postgres"
-    : `SQLite database: ${persistence.databasePath}`);
-  console.log(authConfig.mode === "supabase" ? "Authentication: Supabase Auth" : "Authentication: disabled for local SQLite");
+  console.log("Database: Supabase Postgres");
+  console.log("Authentication: Supabase Auth");
 
   if (interruptedBuyerSearches > 0) {
     console.log(`Recovered ${interruptedBuyerSearches} interrupted buyer search(es).`);

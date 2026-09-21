@@ -84,6 +84,76 @@ test("structured calls enforce schema and private provider routing", async () =>
   assert.equal(capturedOptions.signal, controller.signal);
 });
 
+test("GPT-5 structured calls use the configured low reasoning effort", async () => {
+  let captured;
+  const client = new OpenRouterModelClient({
+    gpt5ReasoningEffort: "low",
+    transport: {
+      async send(request) {
+        captured = request;
+        return response('{"answer":"validated"}');
+      },
+    },
+  });
+
+  await client.generateStructured({
+    model: "openai/gpt-5-nano",
+    instructions: "Return the answer.",
+    input: "question",
+    schemaName: "answer",
+    outputSchema: ResultSchema,
+  });
+
+  assert.deepEqual(captured.responsesRequest.reasoning, { effort: "low" });
+});
+
+test("non-GPT-5 structured calls do not receive a reasoning setting", async () => {
+  let captured;
+  const client = new OpenRouterModelClient({
+    transport: {
+      async send(request) {
+        captured = request;
+        return response('{"answer":"validated"}');
+      },
+    },
+  });
+
+  await client.generateStructured({
+    model: "openai/gpt-4.1-mini",
+    instructions: "Return the answer.",
+    input: "question",
+    schemaName: "answer",
+    outputSchema: ResultSchema,
+  });
+
+  assert.equal("reasoning" in captured.responsesRequest, false);
+});
+
+test("incomplete responses identify exhausted output budgets", async () => {
+  const client = new OpenRouterModelClient({
+    transport: {
+      async send() {
+        return response(undefined, {
+          status: "incomplete",
+          incompleteDetails: { reason: "max_output_tokens" },
+          output: [{ type: "reasoning", content: [] }],
+        });
+      },
+    },
+  });
+
+  await assert.rejects(
+    client.generateStructured({
+      model: "openai/gpt-5-nano",
+      instructions: "Return the answer.",
+      input: "question",
+      schemaName: "answer",
+      outputSchema: ResultSchema,
+    }),
+    /exhausted max_output_tokens/,
+  );
+});
+
 test("generation schema removes unsupported constraints while local Zod validation remains strict", async () => {
   let captured;
   const ConstrainedSchema = z.object({

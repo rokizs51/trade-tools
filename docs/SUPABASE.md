@@ -1,7 +1,9 @@
-# Supabase Postgres Deployment
+# Supabase Postgres Development And Deployment
 
-The production persistence provider is Supabase Postgres. SQLite remains available only for local
-development and the fast repository test suite.
+Supabase Postgres is the only supported persistence platform for local development, integration
+testing, staging, and production. Runtime startup requires `DATABASE_URL` and rejects SQLite
+configuration. Remaining SQLite adapters and tests are legacy migration support scheduled for
+removal under `docs/BUYER_FINDER_CONTROLLED_FALLBACK_PLAN.md`; do not add new SQLite behavior.
 
 ## 1. Create and configure the database
 
@@ -39,7 +41,13 @@ The migration creates costings, load plans, buyer searches, companies, matches, 
 contacts. It enables Row Level Security and revokes all table access from Supabase's `anon` and
 `authenticated` roles. The current application accesses Postgres only from its trusted server.
 
-## 3. Start the application
+> For a database that already contains application data, do not run this bootstrap command until it
+> has migration-history tracking. It replays every SQL file, including a historical workspace
+> rollback migration. Apply a newly added, reviewed migration file directly through the Supabase SQL
+> Editor or the linked Supabase CLI workflow instead. For Buyer Finder activity logging, apply
+> `supabase/migrations/20260921093000_add_buyer_search_events.sql` only.
+
+## 3. One-time legacy data reconciliation
 
 To copy existing local records after applying the schema:
 
@@ -50,15 +58,17 @@ npm run db:migrate:data
 Set `SQLITE_SOURCE_PATH` only when the source is not `data/costings.sqlite`. The import is
 non-destructive and skips IDs already present in Postgres.
 
+This is a temporary one-time migration path, not a supported application runtime. Remove the command
+and importer after final record counts and representative records have been reconciled in Supabase.
+
 ## 4. Start the application
 
 ```powershell
 npm run dev
 ```
 
-Startup prints `Database: Supabase Postgres` when the production provider is active. If neither
-`DATABASE_PROVIDER=postgres` nor `DATABASE_URL` is configured, the app retains the local SQLite
-fallback.
+Startup prints `Database: Supabase Postgres`. `DATABASE_URL` is mandatory and there is no implicit
+SQLite runtime fallback. `DATABASE_PROVIDER`, when present, must be `postgres`.
 
 ## Security boundary
 
@@ -98,8 +108,8 @@ refresh, and expired-session recovery. Every `/api/*` route requires a Bearer ac
 signature, issuer, audience, expiration, subject, and authenticated role before serving an API
 request.
 
-SQLite local development defaults to `AUTH_MODE=disabled`. Disabling authentication is rejected when
-the active persistence provider is Postgres.
+Authentication is required in every supported environment. Local development must use Supabase Auth
+and a development Supabase project; `AUTH_MODE=disabled` is rejected.
 
 Authentication proves who the user is. In the current invite-only internal deployment, every invited
 user can access the shared application records. Add the planned workspace authorization phase before

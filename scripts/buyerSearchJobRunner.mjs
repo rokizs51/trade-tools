@@ -6,6 +6,7 @@ export function createBuyerSearchJobRunner({
   concurrency = 1,
   now = () => new Date().toISOString(),
   recoverStaleRuns = true,
+  logger,
 }) {
   if (!Number.isInteger(concurrency) || concurrency < 1) {
     throw new RangeError("Buyer search job concurrency must be a positive integer.");
@@ -63,6 +64,11 @@ export function createBuyerSearchJobRunner({
         errorCode: "CANCELLED_BY_USER",
         errorMessage: "The buyer search was cancelled before it started.",
       });
+      await recordEvent(runId, {
+        level: "WARN",
+        eventType: "SEARCH_CANCELLED",
+        message: "Search was cancelled before it started.",
+      });
       settleIdleWaiters();
       return true;
     }
@@ -77,6 +83,11 @@ export function createBuyerSearchJobRunner({
       now: now(),
       errorCode: "CANCELLED_BY_USER",
       errorMessage: "The buyer search was cancelled by the user.",
+    });
+    await recordEvent(runId, {
+      level: "WARN",
+      eventType: "SEARCH_CANCELLED",
+      message: "Search was cancelled while it was running.",
     });
     active.controller.abort(new Error("Buyer search cancelled by user."));
     return true;
@@ -126,18 +137,29 @@ export function createBuyerSearchJobRunner({
 
   async function executeJob(runId, controller) {
     try {
-      await repository.transitionSearchRun(runId, "PLANNING", { now: now() });
+      await transition(runId, "PLANNING", { now: now() });
 
+      let lastProgressEvent = "";
       const context = {
         runId,
         signal: controller.signal,
         getRun: () => repository.getSearchRun(runId),
-        transition: (status, changes = {}) => repository.transitionSearchRun(runId, status, {
-          ...changes,
-          now: changes.now ?? now(),
-        }),
-        updateProgress: (progress) => repository.updateSearchRunProgress(runId, progress, now()),
+        transition: (status, changes = {}) => transition(runId, status, changes),
+        updateProgress: async (progress) => {
+          const updated = await repository.updateSearchRunProgress(runId, progress, now());
+          const key = `${progress.stage ?? ""}:${progress.current}:${progress.total}`;
+          if (key !== lastProgressEvent && (progress.current === 0 || progress.current === progress.total)) {
+            lastProgressEvent = key;
+            await recordEvent(runId, {
+              eventType: "SEARCH_PROGRESS",
+              message: progress.stage ?? "Search progress updated.",
+              details: { current: progress.current, total: progress.total },
+            });
+          }
+          return updated;
+        },
         updateTelemetry: (telemetry) => repository.updateSearchRunTelemetry(runId, telemetry, now()),
+        recordEvent: (event) => recordEvent(runId, event),
       };
 
       await execute(context);
@@ -149,11 +171,11 @@ export function createBuyerSearchJobRunner({
       }
 
       if (run.status === "SAVING") {
-        await repository.transitionSearchRun(runId, "COMPLETED", { now: now() });
+        await transition(runId, "COMPLETED", { now: now() });
         return;
       }
 
-      await repository.transitionSearchRun(runId, "FAILED", {
+      await transition(runId, "FAILED", {
         now: now(),
         errorCode: "JOB_INCOMPLETE",
         errorMessage: `Buyer search worker stopped during ${run.status}.`,
@@ -162,13 +184,22 @@ export function createBuyerSearchJobRunner({
       const run = await repository.getSearchRun(runId);
 
       if (run && !isTerminalSearchRunStatus(run.status)) {
-        await repository.transitionSearchRun(runId, controller.signal.aborted ? "CANCELLED" : "FAILED", {
+        const cancelled = controller.signal.aborted;
+        await transition(runId, cancelled ? "CANCELLED" : "FAILED", {
           now: now(),
-          errorCode: controller.signal.aborted ? "CANCELLED_BY_USER" : safeErrorCode(error),
-          errorMessage: controller.signal.aborted
+          errorCode: cancelled ? "CANCELLED_BY_USER" : safeErrorCode(error),
+          errorMessage: cancelled
             ? "The buyer search was cancelled by the user."
             : safeErrorMessage(error),
         });
+        if (!cancelled) {
+          await recordEvent(runId, {
+            level: "ERROR",
+            eventType: "SEARCH_FAILED",
+            message: "Search stopped because a pipeline stage failed.",
+            details: { errorCode: safeErrorCode(error) },
+          });
+        }
       }
     } finally {
       running.delete(runId);
@@ -189,6 +220,43 @@ export function createBuyerSearchJobRunner({
   }
 
   return { enqueue, cancel, onIdle, getSnapshot };
+
+  async function transition(runId, status, changes = {}) {
+    const updated = await repository.transitionSearchRun(runId, status, {
+      ...changes,
+      now: changes.now ?? now(),
+    });
+    await recordEvent(runId, {
+      level: ["FAILED", "CANCELLED", "INTERRUPTED"].includes(status) ? "WARN" : "INFO",
+      eventType: "STATUS_CHANGED",
+      message: `Search status changed to ${status.toLowerCase()}.`,
+      details: { status, stage: updated.currentStage },
+    });
+    return updated;
+  }
+
+  async function recordEvent(runId, event) {
+    const payload = {
+      level: event.level ?? "INFO",
+      eventType: event.eventType,
+      message: event.message,
+      ...(event.details ? { details: event.details } : {}),
+    };
+    try {
+      logger?.event({ runId, ...payload });
+      if (typeof repository.recordSearchEvent === "function") {
+        await repository.recordSearchEvent(runId, payload, { now: now() });
+      }
+    } catch (error) {
+      logger?.event({
+        runId,
+        level: "ERROR",
+        eventType: "EVENT_LOG_WRITE_FAILED",
+        message: "Could not persist a Buyer Finder event.",
+        details: { errorCode: safeErrorCode(error) },
+      });
+    }
+  }
 }
 
 function safeErrorMessage(error) {

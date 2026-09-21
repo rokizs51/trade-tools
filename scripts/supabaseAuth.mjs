@@ -10,19 +10,12 @@ export class AuthenticationError extends Error {
   }
 }
 
-export function readAuthConfig(env = process.env, databaseProvider = "sqlite") {
+export function readAuthConfig(env = process.env) {
   const explicitMode = env.AUTH_MODE?.trim().toLowerCase();
-  const mode = explicitMode || (databaseProvider === "postgres" ? "supabase" : "disabled");
+  const mode = explicitMode || "supabase";
 
-  if (!['disabled', 'supabase'].includes(mode)) {
-    throw new Error("AUTH_MODE must be disabled or supabase.");
-  }
-
-  if (mode === "disabled") {
-    if (databaseProvider === "postgres") {
-      throw new Error("AUTH_MODE=disabled is not allowed with Supabase Postgres persistence.");
-    }
-    return { mode };
+  if (mode !== "supabase") {
+    throw new Error("AUTH_MODE must be supabase. Disabled authentication is no longer supported.");
   }
 
   const supabaseUrl = normalizeSupabaseUrl(env.SUPABASE_URL);
@@ -44,12 +37,6 @@ export function readAuthConfig(env = process.env, databaseProvider = "sqlite") {
 }
 
 export function createRequestAuthenticator(config, dependencies = {}) {
-  if (config.mode === "disabled") {
-    return async function authenticateLocalRequest() {
-      return { id: "local-development", email: null, role: "authenticated" };
-    };
-  }
-
   const verifyToken = dependencies.verifyToken ?? createSupabaseTokenVerifier(config, dependencies);
   return async function authenticateRequest(request) {
     const token = readBearerToken(request.headers.authorization);
@@ -102,9 +89,7 @@ export function readBearerToken(authorization) {
 }
 
 export function createBrowserAuthConfig(config) {
-  return config.mode === "supabase"
-    ? { required: true, supabaseUrl: config.supabaseUrl, publishableKey: config.publishableKey }
-    : { required: false };
+  return { required: true, supabaseUrl: config.supabaseUrl, publishableKey: config.publishableKey };
 }
 
 async function verifyLegacyToken(config, token, fetchImplementation) {

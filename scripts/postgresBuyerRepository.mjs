@@ -12,7 +12,13 @@ import {
   getSearchRunStage,
   isTerminalSearchRunStatus,
 } from "../dist/application/buyerDiscovery/index.js";
-import { BuyerMatchNotFoundError, BuyerSearchRunNotFoundError } from "./buyerRepositoryErrors.mjs";
+import { randomUUID } from "node:crypto";
+
+import {
+  BuyerMatchNotFoundError,
+  BuyerSearchRunNotFoundError,
+  BuyerSearchRunNotTerminalError,
+} from "./buyerRepositoryErrors.mjs";
 
 const ACTIVE_RUN_STATUSES = ["QUEUED", "PLANNING", "RESEARCHING", "VERIFYING", "SAVING"];
 
@@ -48,6 +54,66 @@ export function createPostgresBuyerRepository(sql) {
 
     async getSearchRun(id) {
       return getSearchRun(sql, id);
+    },
+
+    async deleteSearchRun(id) {
+      return sql.begin(async (tx) => {
+        const run = await getSearchRun(tx, id, true);
+        if (!run) throw new BuyerSearchRunNotFoundError(id);
+        if (!isTerminalSearchRunStatus(run.status)) {
+          throw new BuyerSearchRunNotTerminalError(id, run.status);
+        }
+
+        const companyRows = await tx`
+          select distinct company_id from public.buyer_matches where search_run_id = ${id}
+        `;
+        const companyIds = companyRows.map((row) => row.company_id);
+        await tx`delete from public.buyer_search_runs where id = ${id}`;
+
+        let orphanedCompanyCount = 0;
+        if (companyIds.length > 0) {
+          const deletedCompanies = await tx`
+            delete from public.buyer_companies company
+            where company.id in ${tx(companyIds)}
+              and not exists (
+                select 1 from public.buyer_matches match where match.company_id = company.id
+              )
+            returning company.id
+          `;
+          orphanedCompanyCount = deletedCompanies.length;
+        }
+
+        return { id, orphanedCompanyCount };
+      });
+    },
+
+    async recordSearchEvent(searchRunId, event, options = {}) {
+      const values = normalizeSearchEvent(event);
+      const id = options.createId?.() ?? randomUUID();
+      const createdAt = options.now ?? new Date().toISOString();
+      await sql`
+        insert into public.buyer_search_events (
+          id, search_run_id, level, event_type, message, details_json, created_at
+        ) values (
+          ${id}, ${searchRunId}, ${values.level}, ${values.eventType}, ${values.message},
+          ${sql.json(values.details)}, ${createdAt}
+        )
+      `;
+      return { id, searchRunId, ...values, createdAt };
+    },
+
+    async listSearchEvents(searchRunId, limit = 100) {
+      if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+        throw new RangeError("Buyer search event limit must be an integer between 1 and 200.");
+      }
+      const rows = await sql`
+        select id, search_run_id, level, event_type, message, details_json, created_at
+        from public.buyer_search_events
+        where search_run_id = ${searchRunId}
+        order by created_at asc, id asc
+        limit ${limit}
+      `;
+      return rows.map(rowToSearchEvent);
     },
 
     async transitionSearchRun(id, nextStatus, changes = {}) {
@@ -331,6 +397,34 @@ function rowToSearchRun(row) {
     createdAt: isoValue(row.created_at), startedAt: nullableIso(row.started_at),
     completedAt: nullableIso(row.completed_at), updatedAt: isoValue(row.updated_at),
   };
+}
+
+function rowToSearchEvent(row) {
+  return {
+    id: row.id,
+    searchRunId: row.search_run_id,
+    level: row.level,
+    eventType: row.event_type,
+    message: row.message,
+    details: jsonValue(row.details_json),
+    createdAt: isoValue(row.created_at),
+  };
+}
+
+function normalizeSearchEvent(event) {
+  const level = event?.level === "WARN" || event?.level === "ERROR" ? event.level : "INFO";
+  const eventType = typeof event?.eventType === "string" ? event.eventType.trim().slice(0, 80) : "UNKNOWN";
+  const message = typeof event?.message === "string" ? event.message.trim().slice(0, 500) : "Buyer Finder event.";
+  const details = isSafeEventDetails(event?.details) ? event.details : {};
+  if (!eventType) throw new RangeError("Buyer search event type is required.");
+  if (!message) throw new RangeError("Buyer search event message is required.");
+  return { level, eventType, message, details };
+}
+
+function isSafeEventDetails(value) {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return JSON.stringify(value).length <= 4_000;
 }
 
 async function findCompanyId(sql, company) {

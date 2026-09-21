@@ -50,6 +50,42 @@ test("Postgres buyer detail uses the same single joined query", async () => {
   assert.equal(queries.length, 1);
 });
 
+test("Postgres buyer repository records and lists a bounded safe event timeline", async () => {
+  const { sql } = createEventSqlStub();
+  const repository = createPostgresBuyerRepository(sql);
+
+  await repository.recordSearchEvent("run-1", {
+    level: "WARN",
+    eventType: "FALLBACK_STARTED",
+    message: "Additional evidence research started.",
+    details: { minimumQualified: 3, repairCandidateCount: 2 },
+  }, {
+    createId: () => "event-1",
+    now: "2026-09-21T09:30:00.000Z",
+  });
+
+  assert.deepEqual(await repository.listSearchEvents("run-1"), [{
+    id: "event-1",
+    searchRunId: "run-1",
+    level: "WARN",
+    eventType: "FALLBACK_STARTED",
+    message: "Additional evidence research started.",
+    details: { minimumQualified: 3, repairCandidateCount: 2 },
+    createdAt: "2026-09-21T09:30:00.000Z",
+  }]);
+});
+
+test("Postgres buyer repository deletes terminal searches and only prunes unreferenced companies", async () => {
+  const { sql, queries } = createDeleteSqlStub();
+
+  const deleted = await createPostgresBuyerRepository(sql).deleteSearchRun("run-1");
+
+  assert.deepEqual(deleted, { id: "run-1", orphanedCompanyCount: 1 });
+  assert.ok(queries.some((query) => query.includes("delete from public.buyer_search_runs")));
+  assert.ok(queries.some((query) => query.includes("delete from public.buyer_companies company")));
+  assert.ok(queries.some((query) => query.includes("not exists ( select 1 from public.buyer_matches")));
+});
+
 function createSqlStub(rows) {
   const queries = [];
 
@@ -68,6 +104,82 @@ function createSqlStub(rows) {
     throw new Error(`Unexpected SQL in test: ${statement}`);
   }
 
+  return { sql, queries };
+}
+
+function createEventSqlStub() {
+  const events = [];
+
+  function sql(first, ...values) {
+    if (!first?.raw) return { type: "value-list", values: first };
+    const statement = first.join("?").replace(/\s+/g, " ").trim();
+
+    if (statement.startsWith("insert into public.buyer_search_events")) {
+      const [id, searchRunId, level, eventType, message, details, createdAt] = values;
+      events.push({
+        id,
+        search_run_id: searchRunId,
+        level,
+        event_type: eventType,
+        message,
+        details_json: details,
+        created_at: createdAt,
+      });
+      return Promise.resolve([]);
+    }
+
+    if (statement.includes("from public.buyer_search_events")) {
+      return Promise.resolve(events);
+    }
+
+    throw new Error(`Unexpected SQL in event test: ${statement}`);
+  }
+
+  sql.json = (value) => value;
+  return { sql, events };
+}
+
+function createDeleteSqlStub() {
+  const queries = [];
+  const searchRun = {
+    id: "run-1",
+    status: "COMPLETED",
+    commodity: "Coconut",
+    target_country: "Indonesia",
+    target_area: null,
+    requested_limit: 3,
+    input_json: {},
+    plan_json: null,
+    model_config_json: {},
+    outcome_json: null,
+    current_stage: "Completed",
+    progress_current: 0,
+    progress_total: 0,
+    input_tokens: 0,
+    output_tokens: 0,
+    estimated_cost_usd: "0",
+    error_code: null,
+    error_message: null,
+    created_at: "2026-09-21T00:00:00.000Z",
+    started_at: null,
+    completed_at: "2026-09-21T00:01:00.000Z",
+    updated_at: "2026-09-21T00:01:00.000Z",
+  };
+
+  function sql(first, ...values) {
+    if (!first?.raw) return { type: "value-list", values: first };
+    const statement = first.join("?").replace(/\s+/g, " ").trim();
+    queries.push(statement);
+    if (statement.includes("from public.buyer_search_runs") && statement.includes("for update")) {
+      return Promise.resolve([searchRun]);
+    }
+    if (statement.includes("select distinct company_id")) return Promise.resolve([{ company_id: "company-1" }]);
+    if (statement.includes("delete from public.buyer_search_runs")) return Promise.resolve([]);
+    if (statement.includes("delete from public.buyer_companies company")) return Promise.resolve([{ id: "company-1" }]);
+    throw new Error(`Unexpected SQL in delete test: ${statement} (${values.length} values)`);
+  }
+
+  sql.begin = async (callback) => callback(sql);
   return { sql, queries };
 }
 

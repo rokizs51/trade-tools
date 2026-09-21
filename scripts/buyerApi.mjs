@@ -8,6 +8,7 @@ import { InvalidSearchRunTransitionError } from "../dist/application/buyerDiscov
 import {
   BuyerMatchNotFoundError,
   BuyerSearchRunNotFoundError,
+  BuyerSearchRunNotTerminalError,
 } from "./buyerRepositoryErrors.mjs";
 
 const ReviewRequestSchema = z.object({ status: CandidateReviewStatusSchema }).strict();
@@ -112,7 +113,34 @@ export function createBuyerApiHandler({ repository, runtime, now = () => new Dat
           return true;
         }
 
-        sendJson(response, 200, toSearchStatus(run));
+        const events = typeof repository.listSearchEvents === "function"
+          ? await repository.listSearchEvents(run.id)
+          : [];
+        sendJson(response, 200, toSearchStatus(run, events));
+        return true;
+      }
+
+      if (request.method === "DELETE" && searchMatch) {
+        const id = decodePathPart(searchMatch[1]);
+        const run = await repository.getSearchRun(id);
+
+        if (!run) {
+          sendError(response, 404, "BUYER_SEARCH_NOT_FOUND", "Buyer search was not found.");
+          return true;
+        }
+
+        if (!TERMINAL_STATUSES.has(run.status)) {
+          sendError(
+            response,
+            409,
+            "INVALID_SEARCH_STATE",
+            "Cancel the active search before deleting it.",
+          );
+          return true;
+        }
+
+        const deletion = await repository.deleteSearchRun(id);
+        sendJson(response, 200, { id: deletion.id, deleted: true });
         return true;
       }
 
@@ -169,6 +197,11 @@ function handleApiError(response, error) {
     return;
   }
 
+  if (error instanceof BuyerSearchRunNotTerminalError) {
+    sendError(response, 409, "INVALID_SEARCH_STATE", "Cancel the active search before deleting it.");
+    return;
+  }
+
   if (error instanceof InvalidSearchRunTransitionError) {
     sendError(response, 409, error.code, error.message);
     return;
@@ -201,7 +234,7 @@ function toSearchListItem(run) {
   };
 }
 
-function toSearchStatus(run) {
+function toSearchStatus(run, events = []) {
   return {
     id: run.id,
     status: run.status,
@@ -210,6 +243,7 @@ function toSearchStatus(run) {
     progress: run.progress,
     usage: run.usage,
     outcome: run.outcome,
+    events,
     error: run.error,
     createdAt: run.createdAt,
     startedAt: run.startedAt,

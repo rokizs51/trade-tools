@@ -6,6 +6,14 @@ export class BuyerSearchRunNotFoundError extends Error {
   }
 }
 
+export class BuyerSearchRunNotTerminalError extends Error {
+  constructor(id, status) {
+    super(`Buyer search run ${id} cannot be deleted while its status is ${status}.`);
+    this.name = "BuyerSearchRunNotTerminalError";
+    this.code = "BUYER_SEARCH_NOT_TERMINAL";
+  }
+}
+
 export class BuyerMatchNotFoundError extends Error {
   constructor(id) {
     super(`Buyer match ${id} was not found.`);

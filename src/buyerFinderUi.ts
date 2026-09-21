@@ -27,8 +27,30 @@ type CandidateDecision = {
   confidenceLevel: string;
   missingEvidenceTypes: string[];
   rejectionReasons: string[];
+  researchPass?: "STRICT" | "FALLBACK";
 };
-type SearchOutcome = { summary: SearchSummary; decisions: CandidateDecision[] };
+type SearchFallback = {
+  triggered: boolean;
+  reason: "INSUFFICIENT_QUALIFIED_RESULTS" | "NO_REPAIRABLE_CANDIDATES";
+  minimumQualified: number;
+  passCount: 0 | 1;
+  repairCandidateCount: number;
+  supplementalResearchedCandidateCount: number;
+  supplementalGroundedCandidateCount: number;
+  reverifiedCandidateCount: number;
+  recoveredQualifiedCount: number;
+  recoveredMatchCount: number;
+  warning?: string;
+};
+type SearchOutcome = { summary: SearchSummary; fallback?: SearchFallback; decisions: CandidateDecision[] };
+type SearchEvent = {
+  id: string;
+  level: "INFO" | "WARN" | "ERROR";
+  eventType: string;
+  message: string;
+  details: Record<string, unknown>;
+  createdAt: string;
+};
 
 type SearchListItem = {
   id: string;
@@ -67,6 +89,7 @@ type SearchStatusRecord = {
   progress: SearchProgress;
   usage: SearchUsage;
   outcome: SearchOutcome | null;
+  events: SearchEvent[];
   error: { code: string; message: string } | null;
   createdAt: string;
   startedAt: string | null;
@@ -131,6 +154,7 @@ export class BuyerFinderUi {
   private currentResults: BuyerResult[] = [];
   private selectedResultId: string | undefined;
   private currentStatus: SearchStatus | undefined;
+  private currentOutcome: SearchOutcome | null = null;
   private pollTimer: number | undefined;
   private hydrateFormOnNextStatus = false;
   private formLocked = false;
@@ -141,7 +165,7 @@ export class BuyerFinderUi {
     getElement("buyer-history-new").addEventListener("click", () => this.newSearch());
     getElement("buyer-cancel-search").addEventListener("click", () => void this.cancelSearch());
     getElement("buyer-retry-search").addEventListener("click", () => this.prepareRetry());
-    getElement("buyer-history-rows").addEventListener("click", (event) => void this.openHistorySearch(event));
+    getElement("buyer-history-rows").addEventListener("click", (event) => void this.handleHistoryAction(event));
     getElement("buyer-saved-refresh").addEventListener("click", () => void this.renderSavedBuyers());
     this.resultList.addEventListener("click", (event) => this.selectResult(event));
     this.detail.addEventListener("click", (event) => void this.reviewResult(event));
@@ -180,6 +204,7 @@ export class BuyerFinderUi {
     this.currentResults = [];
     this.selectedResultId = undefined;
     this.currentStatus = undefined;
+    this.currentOutcome = null;
     this.hydrateFormOnNextStatus = false;
     this.form.reset();
     setValue("buyer-result-limit", "10");
@@ -299,6 +324,7 @@ export class BuyerFinderUi {
     setText("buyer-progress-count", `${run.progress.current} of ${run.progress.total}`);
     setText("buyer-progress-error", run.error?.message ?? "");
     this.renderOutcome(run.outcome);
+    this.renderEvents(run.events);
 
     const percent = run.progress.total > 0
       ? Math.min(100, Math.round((run.progress.current / run.progress.total) * 100))
@@ -332,6 +358,7 @@ export class BuyerFinderUi {
     getElement("buyer-cancel-search").hidden = true;
     getElement("buyer-retry-search").hidden = true;
     getElement("buyer-outcome").hidden = true;
+    getElement("buyer-event-details").hidden = true;
   }
 
   private renderResults(): void {
@@ -343,7 +370,7 @@ export class BuyerFinderUi {
       "buyer-results-empty",
       this.currentStatus && !TERMINAL_STATUSES.has(this.currentStatus)
         ? "Qualified candidates will appear here as they are verified."
-        : "No qualified candidates were saved for this search.",
+        : getEmptyBuyerResultMessage(this.currentOutcome),
     );
     setText("buyer-results-count", `${this.currentResults.length} ${this.currentResults.length === 1 ? "candidate" : "candidates"}`);
 
@@ -356,6 +383,7 @@ export class BuyerFinderUi {
   }
 
   private renderOutcome(outcome: SearchOutcome | null): void {
+    this.currentOutcome = outcome;
     const panel = getElement("buyer-outcome");
     const details = getElement("buyer-rejection-details");
     const list = getElement("buyer-rejection-list");
@@ -367,9 +395,15 @@ export class BuyerFinderUi {
     }
 
     const rejected = outcome.summary.groundingRejectedCount + outcome.summary.rejectedCandidateCount;
+    const fallbackSummary = outcome.fallback?.triggered
+      ? ` · additional research recovered ${outcome.fallback.recoveredQualifiedCount}`
+      : outcome.fallback?.reason === "NO_REPAIRABLE_CANDIDATES"
+        ? " · no safe evidence-repair candidates"
+        : "";
+    const fallbackWarning = outcome.fallback?.warning ? ` · ${outcome.fallback.warning}` : "";
     setText(
       "buyer-outcome-summary",
-      `${outcome.summary.researchedCandidateCount} researched · ${outcome.summary.savedCandidateCount} qualified · ${rejected} rejected`,
+      `${outcome.summary.researchedCandidateCount} researched · ${outcome.summary.savedCandidateCount} qualified · ${rejected} rejected${fallbackSummary}${fallbackWarning}`,
     );
     const rejectedDecisions = outcome.decisions.filter((decision) => !decision.isEligible);
     details.hidden = rejectedDecisions.length === 0;
@@ -385,6 +419,24 @@ export class BuyerFinderUi {
     }
 
     panel.hidden = false;
+  }
+
+  private renderEvents(events: SearchEvent[] = []): void {
+    const panel = getElement("buyer-event-details") as HTMLDetailsElement;
+    const list = getElement("buyer-event-list");
+    list.replaceChildren();
+
+    for (const event of [...events].reverse()) {
+      const item = createElement("li", `event-${event.level.toLocaleLowerCase("en")}`);
+      const occurredAt = new Date(event.createdAt);
+      const timestamp = Number.isNaN(occurredAt.getTime())
+        ? event.createdAt
+        : occurredAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      item.append(createElement("strong", "", event.message), createElement("time", "", timestamp));
+      list.appendChild(item);
+    }
+
+    panel.hidden = events.length === 0;
   }
 
   private selectResult(event: MouseEvent): void {
@@ -514,9 +566,16 @@ export class BuyerFinderUi {
     }
   }
 
-  private async openHistorySearch(event: MouseEvent): Promise<void> {
+  private async handleHistoryAction(event: MouseEvent): Promise<void> {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
+
+    const deleteButton = target.closest<HTMLButtonElement>("[data-delete-buyer-search-id]");
+    if (deleteButton?.dataset.deleteBuyerSearchId) {
+      await this.deleteHistorySearch(deleteButton.dataset.deleteBuyerSearchId);
+      return;
+    }
+
     const button = target.closest<HTMLButtonElement>("[data-buyer-search-id]");
     if (!button?.dataset.buyerSearchId) return;
     this.stop();
@@ -527,6 +586,22 @@ export class BuyerFinderUi {
     this.hydrateFormOnNextStatus = true;
     this.requestWorkspace("calculator");
     await this.refreshCurrentSearch();
+  }
+
+  private async deleteHistorySearch(searchId: string): Promise<void> {
+    if (!window.confirm("Delete this search and all of its results, evidence, contacts, and activity history? This cannot be undone.")) {
+      return;
+    }
+
+    try {
+      await apiRequest<{ id: string; deleted: true }>(`/api/buyer-searches/${encodeURIComponent(searchId)}`, {
+        method: "DELETE",
+      });
+      if (this.currentSearchId === searchId) this.newSearch();
+      await this.renderHistory();
+    } catch (error) {
+      setText("buyer-history-error", getErrorMessage(error));
+    }
   }
 
   private async renderSavedBuyers(): Promise<void> {
@@ -659,13 +734,24 @@ function createHistoryRow(search: SearchListItem): HTMLTableRowElement {
   action.className = "table-button";
   action.dataset.buyerSearchId = search.id;
   action.textContent = TERMINAL_STATUSES.has(search.status) ? "View" : "Monitor";
+  const actions = document.createElement("div");
+  actions.className = "buyer-history-actions";
+  actions.appendChild(action);
+  if (TERMINAL_STATUSES.has(search.status)) {
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "table-button danger-button";
+    remove.dataset.deleteBuyerSearchId = search.id;
+    remove.textContent = "Delete";
+    actions.appendChild(remove);
+  }
   row.append(
     createTableCell(search.commodity),
     createTableCell(market),
     createTableCell(formatStatus(search.status)),
     createTableCell(progress),
     createTableCell(formatDate(search.createdAt)),
-    createTableCellWith(action),
+    createTableCellWith(actions),
   );
   return row;
 }
@@ -794,6 +880,18 @@ function formatDate(value: string): string {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Buyer Finder could not complete the request.";
+}
+
+function getEmptyBuyerResultMessage(outcome: SearchOutcome | null): string {
+  if (outcome?.fallback?.triggered) {
+    return "No qualified candidates were found after an additional evidence search. Review the rejection details or broaden the next search brief.";
+  }
+
+  if (outcome?.fallback?.reason === "NO_REPAIRABLE_CANDIDATES") {
+    return "No qualified candidates were found, and none had enough grounded evidence for a safe follow-up search.";
+  }
+
+  return "No qualified candidates were saved for this search.";
 }
 
 function getElement(id: string): HTMLElement {

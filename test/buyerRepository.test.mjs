@@ -241,6 +241,31 @@ test("buyer repository reuses a company by canonical domain across searches", ()
   });
 });
 
+test("buyer repository deletes terminal searches, cascades dependent records, and prunes only orphaned companies", () => {
+  withRepository((repository, dbPath) => {
+    createRun(repository, "run-1");
+    completeRun(repository, "run-1");
+    repository.saveCandidateBundle("run-1", makeBundle(), {
+      now: "2026-09-17T09:05:00.000Z",
+      createId: createIds("delete"),
+    });
+
+    const deleted = repository.deleteSearchRun("run-1");
+    assert.deepEqual(deleted, { id: "run-1", orphanedCompanyCount: 1 });
+    assert.equal(repository.getSearchRun("run-1"), undefined);
+
+    const inspectionDb = new DatabaseSync(dbPath);
+    assert.equal(inspectionDb.prepare("SELECT COUNT(*) AS count FROM buyer_matches").get().count, 0);
+    assert.equal(inspectionDb.prepare("SELECT COUNT(*) AS count FROM buyer_sources").get().count, 0);
+    assert.equal(inspectionDb.prepare("SELECT COUNT(*) AS count FROM buyer_contacts").get().count, 0);
+    assert.equal(inspectionDb.prepare("SELECT COUNT(*) AS count FROM buyer_companies").get().count, 0);
+    inspectionDb.close();
+
+    createRun(repository, "active-run");
+    assert.throws(() => repository.deleteSearchRun("active-run"), /cannot be deleted while its status is QUEUED/);
+  });
+});
+
 test("buyer repository updates candidate review state", () => {
   withRepository((repository) => {
     createRun(repository);
@@ -284,3 +309,11 @@ test("buyer repository interrupts every stale non-terminal search", () => {
     assert.equal(repository.getSearchRun("completed").status, "COMPLETED");
   });
 });
+
+function completeRun(repository, id) {
+  repository.transitionSearchRun(id, "PLANNING", { now: "2026-09-17T07:01:00.000Z" });
+  repository.transitionSearchRun(id, "RESEARCHING", { now: "2026-09-17T07:02:00.000Z" });
+  repository.transitionSearchRun(id, "VERIFYING", { now: "2026-09-17T07:03:00.000Z" });
+  repository.transitionSearchRun(id, "SAVING", { now: "2026-09-17T07:04:00.000Z" });
+  repository.transitionSearchRun(id, "COMPLETED", { now: "2026-09-17T07:05:00.000Z" });
+}

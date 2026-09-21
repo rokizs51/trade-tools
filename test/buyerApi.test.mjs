@@ -152,6 +152,7 @@ test("buyer API lists searches and returns polling-safe status records", async (
     assert.equal(status.body.progress.total, 10);
     assert.deepEqual(status.body.input.buyerTypes, ["IMPORTER"]);
     assert.equal(status.body.outcome.summary.savedCandidateCount, 1);
+    assert.deepEqual(status.body.events, []);
     assert.equal(list.body[0].summary.researchedCandidateCount, 3);
 
     const missing = await jsonRequest(baseUrl, "/api/buyer-searches/missing");
@@ -217,6 +218,28 @@ test("buyer API cancels active searches and rejects repeated cancellation", asyn
     const repeated = await jsonRequest(baseUrl, "/api/buyer-searches/run-1/cancel", { method: "POST" });
     assert.equal(repeated.response.status, 409);
     assert.equal(repeated.body.error.code, "INVALID_SEARCH_STATE");
+  });
+});
+
+test("buyer API deletes terminal searches and rejects deletion of active work", async () => {
+  await withApi(async ({ repository, baseUrl }) => {
+    createRun(repository, "completed-run");
+    repository.transitionSearchRun("completed-run", "PLANNING", { now: "2026-09-18T01:01:00.000Z" });
+    repository.transitionSearchRun("completed-run", "RESEARCHING", { now: "2026-09-18T01:02:00.000Z" });
+    repository.transitionSearchRun("completed-run", "VERIFYING", { now: "2026-09-18T01:03:00.000Z" });
+    repository.transitionSearchRun("completed-run", "SAVING", { now: "2026-09-18T01:04:00.000Z" });
+    repository.transitionSearchRun("completed-run", "COMPLETED", { now: "2026-09-18T01:05:00.000Z" });
+
+    const deleted = await jsonRequest(baseUrl, "/api/buyer-searches/completed-run", { method: "DELETE" });
+    assert.equal(deleted.response.status, 200);
+    assert.equal(deleted.body.deleted, true);
+    assert.equal(repository.getSearchRun("completed-run"), undefined);
+
+    createRun(repository, "active-run");
+    const active = await jsonRequest(baseUrl, "/api/buyer-searches/active-run", { method: "DELETE" });
+    assert.equal(active.response.status, 409);
+    assert.equal(active.body.error.code, "INVALID_SEARCH_STATE");
+    assert.ok(repository.getSearchRun("active-run"));
   });
 });
 

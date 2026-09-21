@@ -1,6 +1,7 @@
 # AI Export Buyer Finder Implementation Plan
 
-Status: Milestones 0, 1, 2, 3, 4, and 5 completed
+Status: Milestones 0, 1, 2, 3, 4, and 5 completed. Milestone 6 evaluation remains open, Milestone 7
+deployment readiness is in progress, and the controlled fallback enhancement is planned.
 
 Product principle:
 
@@ -38,7 +39,7 @@ This document is an implementation plan for the new feature. It does not change 
 - Public company-level contact information.
 - Source URLs and evidence for every saved candidate.
 - Confidence scoring and human review.
-- SQLite persistence for searches, companies, matches, contacts, and sources.
+- Supabase Postgres persistence for searches, companies, matches, contacts, and sources.
 - Search history and saved buyer candidates.
 
 ### MVP excludes
@@ -157,10 +158,13 @@ Browser UI
       -> Research Agent with web search
       -> Candidate Verifier Agent
       -> Deterministic normalizer and scorer
-   -> SQLite repositories
+   -> Postgres repositories
+   -> Supabase Postgres
 ```
 
-Do not allow an agent to write directly to SQLite. The model returns schema-validated proposals. Application code decides what is valid and persists it.
+Do not allow an agent to write directly to Supabase Postgres. The model returns schema-validated
+proposals. Application code decides what is valid and persists it through the server-owned
+repository boundary.
 
 ### Why code-controlled orchestration
 
@@ -412,7 +416,9 @@ Across searches, reuse an existing company record when the canonical domain matc
 
 ## 12. Persistence Model
 
-Continue using the existing SQLite file for the local MVP.
+Supabase Postgres is the only supported persistence target. Local development uses a dedicated
+Supabase development project or a local Supabase CLI Postgres stack. SQLite is legacy migration code
+scheduled for removal and must not receive new schema or feature work.
 
 ### `buyer_search_runs`
 
@@ -515,12 +521,12 @@ POST search
    -> insert QUEUED run
    -> return 202 with run ID
    -> background orchestrator starts
-   -> update stage and progress in SQLite
+   -> update stage and progress in Supabase Postgres
    -> save candidates incrementally
    -> mark COMPLETED or FAILED
 ```
 
-For the local MVP:
+For the current single-process deployment:
 
 - Use an in-process job runner.
 - Run only one search job concurrently by default.
@@ -615,6 +621,7 @@ BUYER_PLANNER_MODEL
 BUYER_RESEARCH_MODEL
 BUYER_FORMATTER_MODEL
 BUYER_VERIFIER_MODEL
+BUYER_GPT5_REASONING_EFFORT
 BUYER_SEARCH_MAX_QUERIES
 BUYER_SEARCH_MAX_RESULTS
 BUYER_SEARCH_MAX_RAW_CANDIDATES
@@ -623,6 +630,10 @@ BUYER_SEARCH_MAX_RETRIES
 BUYER_SEARCH_RETRY_BASE_MS
 BUYER_SEARCH_TIMEOUT_MS
 BUYER_SEARCH_MAX_COST_USD
+BUYER_FALLBACK_ENABLED
+BUYER_FALLBACK_MIN_QUALIFIED
+BUYER_FALLBACK_MAX_SEARCH_CALLS
+BUYER_FALLBACK_MAX_CANDIDATES
 ```
 
 Rules:
@@ -663,7 +674,7 @@ Prompt changes require evaluation against the buyer-finder test set before relea
 
 - Never send `OPENROUTER_API_KEY` to the browser.
 - Load secrets from server environment variables.
-- Do not store API keys in SQLite, logs, source files, or committed configuration.
+- Do not store API keys in database rows, logs, source files, or committed configuration.
 
 ### Web-content prompt injection
 
@@ -837,7 +848,7 @@ src/
   buyerFinder.ts
 
 scripts/
-  sqliteBuyerRepository.mjs
+  postgresBuyerRepository.mjs
   buyerSearchJobRunner.mjs
   serve.mjs
 
@@ -987,7 +998,7 @@ Tasks:
 
 Definition of Done:
 
-- Domain code has no DOM, SQLite, OpenRouter, or network dependency.
+- Domain code has no DOM, database, OpenRouter, or network dependency.
 - All score and rejection rules are tested.
 - Evaluation scenarios are documented.
 - Build and tests pass.
@@ -1065,7 +1076,7 @@ Definition of Done:
 
 Implementation note:
 
-- Added the five buyer SQLite tables, foreign keys, constraints, and planned indexes.
+- Added the initial five buyer persistence tables, foreign keys, constraints, and planned indexes.
 - Added durable search-run creation, listing, lookup, progress, usage, errors, and explicit state transitions.
 - Added transactional company, match, evidence, and sourced-contact persistence.
 - Added deterministic company reuse by canonical domain, then normalized name and country.
@@ -1109,9 +1120,9 @@ Implementation note:
 - Added versioned planner, research, and verifier prompts with distinct responsibilities.
 - Added provider-independent planner, researcher, verifier, and deterministic orchestration modules.
 - Added the production runtime composition that connects OpenRouter, the in-process queue, the
-  orchestrator, and SQLite without allowing an agent to access persistence directly.
+  orchestrator, and repository boundary without allowing an agent to access persistence directly.
 - Added deterministic URL provenance checks: evidence not recovered by the research call cannot
-  reach verification or SQLite.
+  reach verification or persistence.
 - Added deterministic field-level evidence requirements for identity, location, commodity, and
   buyer-role claims before a candidate can be eligible.
 - Added deterministic country, requested-role, required-website, and required-contact enforcement.
@@ -1276,8 +1287,10 @@ Implementation note:
 Status:
 
 In progress as of 2026-09-20. The production persistence foundation is implemented: Supabase
-Postgres, versioned schema migrations, a non-destructive SQLite data-import path, server-side
+Postgres, versioned schema migrations, a completed one-time legacy data-import path, server-side
 connection configuration, enabled Row Level Security, and revoked browser-role table grants.
+Supabase Postgres is now the only supported persistence target; runtime SQLite adapters and
+SQLite-backed test fixtures are scheduled for removal before the controlled fallback ships.
 
 The remaining work is now split into explicit delivery phases below. Performance hardening is first
 because moving the database from the local process to a remote Supabase region exposed unnecessary
@@ -1392,7 +1405,7 @@ before supporting multiple organizations, teams that should not share records, o
 #### Phase 7.6: Staging, Secrets, Retention, And Operations
 
 - Create a separate staging Supabase project and apply every migration from an empty database.
-- Rehearse the SQLite import and verify record counts and representative records.
+- Confirm final legacy-import record counts and representative records before removing the importer.
 - Run authenticated API smoke tests and workspace-isolation tests against staging.
 - Store production secrets in deployment secret management and confirm they are absent from browser
   bundles, logs, source control, and committed environment files.
@@ -1406,8 +1419,11 @@ before supporting multiple organizations, teams that should not share records, o
   Point-in-Time Recovery.
 - Add production monitoring for API errors, authentication failures, database latency, search-job
   failures, queue depth, and budget consumption.
-- Retain SQLite only for local development and fast tests; production and staging use Supabase
-  Postgres.
+- Use Supabase Postgres for local development, integration testing, staging, and production.
+- Replace SQLite-backed fast-test fixtures with deterministic in-memory repository doubles and keep
+  Postgres repository integration tests against an isolated Supabase development/test database.
+- Remove SQLite runtime adapters, provider branching, and the one-time importer after final data
+  reconciliation is accepted.
 
 Definition of Done:
 
@@ -1442,6 +1458,46 @@ The current invite-only deployment may remain at Phase 7.2 only while every user
 intended to share every application record. Complete Phase 7.3 before enabling public signup,
 supporting multiple organizations, or introducing users who require separate data boundaries.
 
+### Milestone 8: Controlled Evidence-Recovery Fallback
+
+Status:
+
+Core strict fallback implemented as of 2026-09-20. The runtime performs at most one bounded
+evidence-recovery pass, preserves user constraints, reuses the existing grounding and scoring gates,
+records safe fallback diagnostics, and reports fallback progress in the UI. Supabase Postgres and
+Supabase Auth are now mandatory at runtime. Live comparative evaluation and the optional Research
+Leads phase remain pending. The comprehensive design and rollout plan is maintained in
+`docs/BUYER_FINDER_CONTROLLED_FALLBACK_PLAN.md`.
+
+Goal:
+
+Reduce empty and sparse Buyer Finder searches without weakening the existing definition of a
+qualified buyer.
+
+Core decisions:
+
+- Preserve the strict first pass and its deterministic eligibility and confidence rules.
+- Trigger at most one bounded supplemental evidence-recovery pass when the qualified result count is
+  below the configured minimum.
+- Select repair candidates deterministically and target only their missing evidence.
+- Preserve country, area, buyer roles, exclusions, website requirements, contact requirements,
+  source provenance, timeout, and cost ceilings.
+- Reverify only new or materially improved candidates and persist recovered matches idempotently.
+- Keep optional Research Leads separate from qualified results and disabled until strict fallback
+  evaluation is accepted.
+- Complete the Supabase-only runtime transition before shipping the enhancement.
+
+Definition of Done:
+
+- Supabase Postgres is the only supported runtime and repository-integration persistence platform.
+- The fallback executes no more than once and never changes user constraints.
+- Every recovered qualified candidate passes the original grounding, verification, eligibility, and
+  scoring rules.
+- The API and UI explain when fallback ran, why it ran, and what it recovered.
+- Evaluation shows a material reduction in zero-result searches without unacceptable precision,
+  cost, or latency regression.
+- Build, tests, authenticated smoke tests, Postgres integration tests, and Supabase advisors pass.
+
 ## 25. Recommended Build Order
 
 1. Milestone 0: Product contract and domain rules.
@@ -1451,7 +1507,8 @@ supporting multiple organizations, or introducing users who require separate dat
 5. Milestone 4: API.
 6. Milestone 5: UI.
 7. Milestone 6: Evaluation and hardening.
-8. Milestone 7: Deployment readiness only when external/shared access is needed.
+8. Milestone 7: Deployment readiness and Supabase-only consolidation.
+9. Milestone 8: Controlled evidence-recovery fallback.
 
 The first useful engineering demo should happen after Milestone 1.
 
@@ -1501,8 +1558,11 @@ The scenario fails acceptance if:
 - Public contact information may be missing or outdated.
 - Search quality varies by language, country, commodity, and model.
 - OpenRouter web search is a beta dependency.
-- SQLite and an in-process worker are suitable for local/internal usage, not horizontally scaled deployment.
-- The app has no authentication today.
+- The in-process worker is limited to a single application process and is not horizontally durable.
+- Authentication is implemented, but workspace authorization remains deferred for the current
+  trusted single-team deployment.
+- Strict qualification can still produce zero results when public evidence is incomplete; Milestone
+  8 addresses this through bounded evidence recovery without weakening acceptance rules.
 - Human review remains required before sales outreach.
 
 ## 28. Decisions To Confirm Before Milestone 0 Is Complete

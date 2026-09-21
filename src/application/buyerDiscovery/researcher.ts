@@ -17,6 +17,9 @@ export interface BuyerResearcherOptions {
   maxSearchCalls: number;
   maxResultsPerSearch: number;
   searchContextSize?: "low" | "medium" | "high";
+  instructions?: string;
+  promptVersion?: string;
+  schemaDescription?: string;
 }
 
 export function createBuyerResearcher(options: BuyerResearcherOptions) {
@@ -31,17 +34,19 @@ export function createBuyerResearcher(options: BuyerResearcherOptions) {
         onSearchComplete?: (result: ResearchSearchResult) => void | Promise<void>;
       },
     ): Promise<ResearchCallResult<BuyerCandidateBatch>> {
+      const instructions = options.instructions ?? BUYER_RESEARCH_INSTRUCTIONS;
+      const promptVersion = options.promptVersion ?? BUYER_RESEARCH_PROMPT_VERSION;
       return options.client.research({
         model: options.model,
         formattingModel: options.formattingModel,
-        instructions: `${BUYER_RESEARCH_INSTRUCTIONS}\nUse ${runOptions.retrievedAt} as the retrieval timestamp.`,
+        instructions: `${instructions}\nUse ${runOptions.retrievedAt} as the retrieval timestamp.`,
         input: JSON.stringify({
           criteria: input,
           approvedPlan: plan,
-          promptVersion: BUYER_RESEARCH_PROMPT_VERSION,
+          promptVersion,
         }),
         schemaName: "buyer_candidate_batch",
-        schemaDescription: "Publicly sourced potential buyer companies.",
+        schemaDescription: options.schemaDescription ?? "Publicly sourced potential buyer companies.",
         outputSchema: BuyerCandidateBatchSchema,
         maxOutputTokens: 8_000,
         maxSearchCalls: options.maxSearchCalls,

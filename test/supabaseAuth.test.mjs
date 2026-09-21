@@ -15,19 +15,18 @@ import {
 const projectUrl = "https://project-ref.supabase.co";
 const publishableKey = "sb_publishable_test_key";
 
-test("authentication configuration protects Postgres and permits explicit local SQLite mode", () => {
-  assert.deepEqual(readAuthConfig({}, "sqlite"), { mode: "disabled" });
-  assert.throws(() => readAuthConfig({}, "postgres"), /SUPABASE_URL is required/);
+test("authentication configuration always requires Supabase Auth", () => {
+  assert.throws(() => readAuthConfig({}), /SUPABASE_URL is required/);
   assert.throws(
-    () => readAuthConfig({ AUTH_MODE: "disabled" }, "postgres"),
-    /not allowed with Supabase Postgres/,
+    () => readAuthConfig({ AUTH_MODE: "disabled" }),
+    /Disabled authentication is no longer supported/,
   );
 
   const config = readAuthConfig({
     AUTH_MODE: "supabase",
     SUPABASE_URL: `${projectUrl}/`,
     SUPABASE_PUBLISHABLE_KEY: publishableKey,
-  }, "postgres");
+  });
   assert.deepEqual(config, {
     mode: "supabase",
     supabaseUrl: projectUrl,
@@ -104,7 +103,7 @@ function validConfig() {
   return readAuthConfig({
     SUPABASE_URL: projectUrl,
     SUPABASE_PUBLISHABLE_KEY: publishableKey,
-  }, "postgres");
+  });
 }
 
 async function signToken(privateKey, expiresAt) {

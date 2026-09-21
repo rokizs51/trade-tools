@@ -6,3 +6,4 @@ export * from "./searchPlanner.js";
 export * from "./researcher.js";
 export * from "./verifier.js";
 export * from "./orchestrator.js";
+export * from "./fallback.js";

@@ -108,9 +108,11 @@ function metadata(id, model, costUsd = 0.001) {
 
 function createFakeClient({ candidates = [candidate("Good Imports")], onResearch, onVerify, plannerPlan = plan } = {}) {
   let verifierCalls = 0;
+  let researchCalls = 0;
 
   return {
     get verifierCalls() { return verifierCalls; },
+    get researchCalls() { return researchCalls; },
 
     async generateStructured(request) {
       if (request.schemaName === "buyer_search_plan") {
@@ -130,12 +132,13 @@ function createFakeClient({ candidates = [candidate("Good Imports")], onResearch
     },
 
     async research(request) {
+      researchCalls += 1;
       if (onResearch) {
-        return onResearch(request);
+        return onResearch(request, researchCalls);
       }
 
-      const searchMetadata = metadata("research-search-1", request.model, 0.002);
-      const formattingMetadata = metadata("research-format-1", request.formattingModel, 0.001);
+      const searchMetadata = metadata(`research-search-${researchCalls}`, request.model, 0.002);
+      const formattingMetadata = metadata(`research-format-${researchCalls}`, request.formattingModel, 0.001);
       await request.onSearchComplete?.({
         researchText: "Grounded fake research.",
         sources: candidates.flatMap((item) => item.evidence.map(({ url, title, excerpt }) => ({ url, title, excerpt }))),
@@ -148,7 +151,7 @@ function createFakeClient({ candidates = [candidate("Good Imports")], onResearch
         sources: candidates.flatMap((item) => item.evidence.map(({ url, title, excerpt }) => ({ url, title, excerpt }))),
         searchMetadata,
         formattingMetadata,
-        metadata: metadata("research-total-1", request.formattingModel, 0.003),
+        metadata: metadata(`research-total-${researchCalls}`, request.formattingModel, 0.003),
       };
     },
   };
@@ -169,7 +172,26 @@ function defaultLimits(overrides = {}) {
     retryBaseDelayMs: 0,
     timeoutMs: 5_000,
     maxCostUsd: 1,
+    fallbackEnabled: false,
+    fallbackMinQualified: 3,
+    fallbackMaxSearchCalls: 2,
+    fallbackMaxCandidates: 10,
     ...overrides,
+  };
+}
+
+async function completeResearch(request, candidates, pass) {
+  const sources = candidates.flatMap((item) => item.evidence.map(({ url, title, excerpt }) => ({ url, title, excerpt })));
+  const searchMetadata = metadata(`${pass}-search`, request.model, 0.002);
+  const formattingMetadata = metadata(`${pass}-format`, request.formattingModel, 0.001);
+  await request.onSearchComplete?.({ researchText: `${pass} research`, sources, metadata: searchMetadata });
+  return {
+    data: { candidates },
+    researchText: `${pass} research`,
+    sources,
+    searchMetadata,
+    formattingMetadata,
+    metadata: metadata(`${pass}-total`, request.formattingModel, 0.003),
   };
 }
 
@@ -356,6 +378,127 @@ test("orchestrator ranks evidence-complete candidates before applying the result
     assert.equal(results.length, 1);
     assert.equal(results[0].company.name, "Second Strong Candidate");
     assert.equal(summary.verificationCandidateCount, 1);
+  });
+});
+
+test("orchestrator does not run fallback when the strict pass meets the qualified threshold", async () => {
+  const client = createFakeClient({ candidates: [candidate("Enough Imports")] });
+
+  await withHarness({
+    client,
+    searchInput: { ...input, resultLimit: 1 },
+    limits: defaultLimits({ fallbackEnabled: true, fallbackMinQualified: 1 }),
+  }, async ({ repository }) => {
+    assert.equal(client.researchCalls, 1);
+    assert.equal(repository.getSearchResults("run-1").length, 1);
+    assert.equal(repository.getSearchRun("run-1").outcome.fallback, undefined);
+  });
+});
+
+test("orchestrator runs one evidence-repair pass and recovers a qualified candidate", async () => {
+  const incomplete = candidate("Recoverable Imports");
+  incomplete.evidence = incomplete.evidence.filter((source) => source.evidenceType !== "BUYER_ROLE");
+  const improved = candidate("Recoverable Imports");
+  const client = createFakeClient({
+    candidates: [incomplete],
+    onResearch(request, callNumber) {
+      return completeResearch(request, callNumber === 1 ? [incomplete] : [improved], `fallback-${callNumber}`);
+    },
+  });
+
+  await withHarness({
+    client,
+    limits: defaultLimits({ fallbackEnabled: true, fallbackMinQualified: 1 }),
+  }, async ({ repository, summary }) => {
+    const run = repository.getSearchRun("run-1");
+    const results = repository.getSearchResults("run-1");
+    assert.equal(client.researchCalls, 2);
+    assert.equal(client.verifierCalls, 2);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].company.name, "Recoverable Imports");
+    assert.equal(summary.savedCandidateCount, 1);
+    assert.equal(run.outcome.fallback.triggered, true);
+    assert.equal(run.outcome.fallback.passCount, 1);
+    assert.equal(run.outcome.fallback.recoveredQualifiedCount, 1);
+    assert.equal(run.outcome.fallback.reverifiedCandidateCount, 1);
+    assert.equal(run.outcome.decisions.length, 1);
+    assert.equal(run.outcome.decisions[0].researchPass, "FALLBACK");
+    assert.equal(run.modelConfig.calls.filter((call) => call.stage === "FALLBACK_RESEARCH_SEARCH").length, 1);
+  });
+});
+
+test("orchestrator does not spend fallback calls on terminal rejections", async () => {
+  const wrongCountry = candidate("Wrong Market Imports", "United States", "US");
+  const client = createFakeClient({ candidates: [wrongCountry] });
+
+  await withHarness({
+    client,
+    limits: defaultLimits({ fallbackEnabled: true, fallbackMinQualified: 1 }),
+  }, async ({ repository }) => {
+    const fallback = repository.getSearchRun("run-1").outcome.fallback;
+    assert.equal(client.researchCalls, 1);
+    assert.equal(fallback.triggered, false);
+    assert.equal(fallback.reason, "NO_REPAIRABLE_CANDIDATES");
+    assert.equal(repository.getSearchResults("run-1").length, 0);
+  });
+});
+
+test("orchestrator never repeats the fallback when supplemental evidence is unchanged", async () => {
+  const incomplete = candidate("Still Incomplete Imports");
+  incomplete.evidence = incomplete.evidence.filter((source) => source.evidenceType !== "BUYER_ROLE");
+  const client = createFakeClient({
+    candidates: [incomplete],
+    onResearch(request, callNumber) {
+      return completeResearch(request, [incomplete], `bounded-${callNumber}`);
+    },
+  });
+
+  await withHarness({
+    client,
+    limits: defaultLimits({ fallbackEnabled: true, fallbackMinQualified: 1 }),
+  }, async ({ repository }) => {
+    const fallback = repository.getSearchRun("run-1").outcome.fallback;
+    assert.equal(client.researchCalls, 2);
+    assert.equal(fallback.passCount, 1);
+    assert.equal(fallback.reverifiedCandidateCount, 0);
+    assert.equal(repository.getSearchResults("run-1").length, 0);
+  });
+});
+
+test("orchestrator keeps strict qualified results when the supplemental pass fails", async () => {
+  const qualified = candidate("Strict Qualified Imports");
+  const repairable = candidate("Repairable After Strict Imports");
+  repairable.evidence = repairable.evidence.filter((source) => source.evidenceType !== "BUYER_ROLE");
+  const client = createFakeClient({
+    candidates: [qualified, repairable],
+    onResearch(request, callNumber) {
+      if (callNumber === 1) return completeResearch(request, [qualified, repairable], "strict-with-one");
+      throw Object.assign(new Error("Supplemental provider failure"), { statusCode: 503 });
+    },
+  });
+
+  await withHarness({
+    client,
+    limits: defaultLimits({ fallbackEnabled: true, fallbackMinQualified: 2, maxRetries: 0 }),
+  }, async ({ repository }) => {
+    const run = repository.getSearchRun("run-1");
+    assert.equal(run.status, "COMPLETED");
+    assert.equal(repository.getSearchResults("run-1").length, 1);
+    assert.match(run.outcome.fallback.warning, /strict qualified results were retained/i);
+  });
+});
+
+test("orchestrator deterministically rejects user-excluded companies", async () => {
+  const excluded = candidate("Excluded Imports");
+  const client = createFakeClient({ candidates: [excluded] });
+
+  await withHarness({
+    client,
+    searchInput: { ...input, exclusions: ["Excluded Imports"] },
+  }, async ({ repository }) => {
+    const run = repository.getSearchRun("run-1");
+    assert.equal(repository.getSearchResults("run-1").length, 0);
+    assert.match(run.outcome.decisions[0].rejectionReasons.join(" "), /user-provided exclusion/i);
   });
 });
 

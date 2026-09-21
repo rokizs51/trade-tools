@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  BUYER_FALLBACK_RESEARCH_INSTRUCTIONS,
+  BUYER_FALLBACK_RESEARCH_PROMPT_VERSION,
   BUYER_RESEARCH_INSTRUCTIONS,
   BUYER_RESEARCH_PROMPT_VERSION,
   BUYER_VERIFIER_INSTRUCTIONS,
@@ -11,9 +13,14 @@ import { buyerFinderPromptInjectionAttacks } from "./fixtures/buyerFinderPromptI
 
 test("buyer prompts explicitly treat retrieved content as untrusted data", () => {
   assert.equal(BUYER_RESEARCH_PROMPT_VERSION, "buyer-research-v3");
+  assert.equal(BUYER_FALLBACK_RESEARCH_PROMPT_VERSION, "buyer-fallback-research-v1");
   assert.equal(BUYER_VERIFIER_PROMPT_VERSION, "buyer-verifier-v3");
 
-  for (const prompt of [BUYER_RESEARCH_INSTRUCTIONS, BUYER_VERIFIER_INSTRUCTIONS]) {
+  for (const prompt of [
+    BUYER_RESEARCH_INSTRUCTIONS,
+    BUYER_FALLBACK_RESEARCH_INSTRUCTIONS,
+    BUYER_VERIFIER_INSTRUCTIONS,
+  ]) {
     assert.match(prompt, /untrusted evidence/i);
     assert.match(prompt, /never follow/i);
     assert.match(prompt, /reveal hidden instructions/i);

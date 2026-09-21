@@ -22,6 +22,7 @@ export interface OpenRouterModelClientOptions {
   appTitle?: string;
   httpReferer?: string;
   timeoutMs?: number;
+  gpt5ReasoningEffort?: "low" | "medium" | "high";
 }
 
 export class OpenRouterModelCapabilityError extends Error {
@@ -64,6 +65,8 @@ const responseEnvelopeSchema = z
     model: z.string().min(1),
     outputText: z.string().optional(),
     output: z.array(z.unknown()),
+    status: z.string().optional(),
+    incompleteDetails: z.object({ reason: z.string().optional() }).passthrough().nullable().optional(),
     usage: z
       .object({
         inputTokens: z.number().nonnegative(),
@@ -158,8 +161,11 @@ const privateProviderRouting = {
 
 export class OpenRouterModelClient implements ModelClient {
   private readonly transport: OpenRouterTransport;
+  private readonly gpt5ReasoningEffort: "low" | "medium" | "high";
 
   constructor(options: OpenRouterModelClientOptions) {
+    this.gpt5ReasoningEffort = options.gpt5ReasoningEffort ?? "low";
+
     if (options.transport) {
       this.transport = options.transport;
       return;
@@ -215,6 +221,7 @@ export class OpenRouterModelClient implements ModelClient {
             store: false,
             stream: false,
             provider: privateProviderRouting,
+            ...this.gpt5Reasoning(request.model),
             maxOutputTokens: request.maxOutputTokens ?? 5_000,
             tools: [
               {
@@ -285,6 +292,7 @@ export class OpenRouterModelClient implements ModelClient {
         store: false,
         stream: false,
         provider: privateProviderRouting,
+        ...this.gpt5Reasoning(request.model),
         maxOutputTokens: request.maxOutputTokens ?? 4_000,
         text: {
           format: {
@@ -312,6 +320,14 @@ export class OpenRouterModelClient implements ModelClient {
       throw error;
     }
   }
+
+  private gpt5Reasoning(model: string): Record<string, unknown> {
+    return isGpt5Model(model) ? { reasoning: { effort: this.gpt5ReasoningEffort } } : {};
+  }
+}
+
+function isGpt5Model(model: string): boolean {
+  return /^openai\/gpt-5(?:[.-]|$)/i.test(model.trim());
 }
 
 function isParameterRoutingFailure(error: unknown): boolean {
@@ -397,7 +413,11 @@ function toStrictProviderJsonSchema(value: unknown): unknown {
 
 function parseResponse(value: unknown): ParsedOpenRouterResponse {
   const response = responseEnvelopeSchema.parse(value);
-  const outputText = response.outputText ?? extractOutputText(response.output);
+  const outputText = response.outputText ?? extractOutputText(
+    response.output,
+    response.status,
+    response.incompleteDetails?.reason,
+  );
   const selectedEndpoint = response.openrouterMetadata?.endpoints.available.find((endpoint) => endpoint.selected);
   const successfulAttempt = [...(response.openrouterMetadata?.attempts ?? [])]
     .reverse()
@@ -432,7 +452,11 @@ function parseResponse(value: unknown): ParsedOpenRouterResponse {
   };
 }
 
-function extractOutputText(output: unknown[]): string {
+function extractOutputText(
+  output: unknown[],
+  status?: string,
+  incompleteReason?: string,
+): string {
   const text = output
     .flatMap((item) => {
       const parsed = outputMessageSchema.safeParse(item);
@@ -442,6 +466,12 @@ function extractOutputText(output: unknown[]): string {
     .join("");
 
   if (!text) {
+    if (status === "incomplete" && incompleteReason === "max_output_tokens") {
+      throw new Error(
+        "OpenRouter response exhausted max_output_tokens before producing complete output text. " +
+        "For GPT-5 models, lower reasoning effort or increase the stage output budget.",
+      );
+    }
     throw new Error("OpenRouter response did not contain output text.");
   }
 

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { BuyerSearchInputSchema } from "../dist/domain/buyers/index.js";
 import {
+  BUYER_FALLBACK_RESEARCH_PROMPT_VERSION,
   BUYER_PLANNER_PROMPT_VERSION,
   BUYER_RESEARCH_PROMPT_VERSION,
   BUYER_VERIFIER_PROMPT_VERSION,
@@ -25,19 +26,23 @@ export function createBuyerDiscoveryRuntime({
   env = process.env,
   now = () => new Date().toISOString(),
   createId = randomUUID,
+  logger,
 }) {
   const config = readBuyerDiscoveryConfig(env);
   const modelClient = client ?? new OpenRouterModelClient({
     apiKey: env.OPENROUTER_API_KEY,
     timeoutMs: config.limits.timeoutMs,
+    gpt5ReasoningEffort: config.gpt5ReasoningEffort,
   });
   const orchestrator = createBuyerDiscoveryOrchestrator({
     client: modelClient,
     repository,
     models: config.models,
     limits: config.limits,
+    gpt5ReasoningEffort: config.gpt5ReasoningEffort,
     createId,
     now,
+    logger,
   });
   const runner = createBuyerSearchJobRunner({
     repository,
@@ -73,9 +78,11 @@ export function createBuyerDiscoveryRuntime({
         createId,
         modelConfig: {
           requestedModels: config.models,
+          gpt5ReasoningEffort: config.gpt5ReasoningEffort,
           promptVersions: config.promptVersions,
         },
       });
+      await recordQueuedEvent(repository, run.id, now, logger);
       await runner.enqueue(run.id);
       return run;
     },
@@ -97,6 +104,10 @@ export function readBuyerDiscoveryConfig(env = process.env) {
       formatter: env.BUYER_FORMATTER_MODEL || verifierModel,
       verifier: verifierModel,
     },
+    gpt5ReasoningEffort: reasoningEffort(
+      env.BUYER_GPT5_REASONING_EFFORT,
+      "BUYER_GPT5_REASONING_EFFORT",
+    ),
     limits: {
       maxSearchCalls: positiveInteger(env.BUYER_SEARCH_MAX_QUERIES, 3, "BUYER_SEARCH_MAX_QUERIES"),
       maxResultsPerSearch: positiveInteger(env.BUYER_SEARCH_MAX_RESULTS, 5, "BUYER_SEARCH_MAX_RESULTS"),
@@ -105,6 +116,22 @@ export function readBuyerDiscoveryConfig(env = process.env) {
       maxRetries: nonNegativeInteger(env.BUYER_SEARCH_MAX_RETRIES, 2, "BUYER_SEARCH_MAX_RETRIES"),
       retryBaseDelayMs: nonNegativeInteger(env.BUYER_SEARCH_RETRY_BASE_MS, 500, "BUYER_SEARCH_RETRY_BASE_MS"),
       timeoutMs: positiveInteger(env.BUYER_SEARCH_TIMEOUT_MS, 120_000, "BUYER_SEARCH_TIMEOUT_MS"),
+      fallbackEnabled: booleanSetting(env.BUYER_FALLBACK_ENABLED, true, "BUYER_FALLBACK_ENABLED"),
+      fallbackMinQualified: positiveInteger(
+        env.BUYER_FALLBACK_MIN_QUALIFIED,
+        3,
+        "BUYER_FALLBACK_MIN_QUALIFIED",
+      ),
+      fallbackMaxSearchCalls: positiveInteger(
+        env.BUYER_FALLBACK_MAX_SEARCH_CALLS,
+        2,
+        "BUYER_FALLBACK_MAX_SEARCH_CALLS",
+      ),
+      fallbackMaxCandidates: positiveInteger(
+        env.BUYER_FALLBACK_MAX_CANDIDATES,
+        10,
+        "BUYER_FALLBACK_MAX_CANDIDATES",
+      ),
       ...(maximumCost === undefined ? {} : { maxCostUsd: maximumCost }),
     },
     queue: {
@@ -117,6 +144,7 @@ export function readBuyerDiscoveryConfig(env = process.env) {
     promptVersions: {
       planner: BUYER_PLANNER_PROMPT_VERSION,
       research: BUYER_RESEARCH_PROMPT_VERSION,
+      fallbackResearch: BUYER_FALLBACK_RESEARCH_PROMPT_VERSION,
       verifier: BUYER_VERIFIER_PROMPT_VERSION,
     },
   };
@@ -154,4 +182,40 @@ function optionalPositiveNumber(value, name) {
   }
 
   return parsed;
+}
+
+function reasoningEffort(value, name) {
+  if (value === undefined || value === "") return "low";
+  const normalized = String(value).trim().toLowerCase();
+  if (["low", "medium", "high"].includes(normalized)) return normalized;
+  throw new Error(`${name} must be low, medium, or high.`);
+}
+
+async function recordQueuedEvent(repository, runId, now, logger) {
+  const event = {
+    eventType: "SEARCH_QUEUED",
+    message: "Search request was accepted and added to the local queue.",
+  };
+  logger?.event({ runId, ...event });
+  if (typeof repository.recordSearchEvent === "function") {
+    try {
+      await repository.recordSearchEvent(runId, event, { now: now() });
+    } catch (error) {
+      logger?.event({
+        runId,
+        level: "ERROR",
+        eventType: "EVENT_LOG_WRITE_FAILED",
+        message: "Could not persist the queued Buyer Finder event.",
+        details: { errorCode: error?.code ?? "EVENT_LOG_WRITE_FAILED" },
+      });
+    }
+  }
+}
+
+function booleanSetting(value, fallback, name) {
+  if (value === undefined || value === "") return fallback;
+  const normalized = String(value).trim().toLowerCase();
+  if (["true", "1", "yes", "on"].includes(normalized)) return true;
+  if (["false", "0", "no", "off"].includes(normalized)) return false;
+  throw new Error(`${name} must be true or false.`);
 }

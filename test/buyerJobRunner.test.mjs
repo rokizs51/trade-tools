@@ -163,3 +163,41 @@ test("job runner recovery interrupts stale runs when it starts", async () => {
     assert.equal(repository.getSearchRun("stale-run").status, "INTERRUPTED");
   });
 });
+
+test("job runner records a safe lifecycle timeline when the repository supports events", async () => {
+  await withRepository(async (repository) => {
+    createRun(repository, "run-events");
+    const events = [];
+    const consoleEvents = [];
+    repository.recordSearchEvent = async (searchRunId, event, options) => {
+      events.push({ searchRunId, ...event, createdAt: options.now });
+    };
+
+    const runner = createBuyerSearchJobRunner({
+      repository,
+      recoverStaleRuns: false,
+      now: () => "2026-09-21T09:30:00.000Z",
+      logger: { event: (event) => consoleEvents.push(event) },
+      execute: async (job) => {
+        await job.updateProgress({ current: 0, total: 1, stage: "Searching sources" });
+        await job.transition("RESEARCHING");
+        await job.transition("VERIFYING");
+        await job.transition("SAVING");
+      },
+    });
+
+    await runner.enqueue("run-events");
+    await runner.onIdle();
+
+    assert.deepEqual(events.map((event) => event.eventType), [
+      "STATUS_CHANGED",
+      "SEARCH_PROGRESS",
+      "STATUS_CHANGED",
+      "STATUS_CHANGED",
+      "STATUS_CHANGED",
+      "STATUS_CHANGED",
+    ]);
+    assert.equal(events.at(-1).details.status, "COMPLETED");
+    assert.equal(consoleEvents.length, events.length);
+  });
+});
