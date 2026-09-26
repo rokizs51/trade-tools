@@ -6,7 +6,6 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "db:migrate": "npm run build && node --env-file-if-exists=.env scripts/migratePostgres.mjs",
-    "db:migrate:data": "npm run build && node --env-file-if-exists=.env scripts/migrateSqliteDataToPostgres.mjs",
     "performance:db": "npm run build && node --env-file-if-exists=.env scripts/benchmarkPostgres.mjs",
     "buyer:pipeline": "npm run build && node --env-file-if-exists=.env scripts/runBuyerFinderPipeline.mjs",
     "buyer:spike": "npm run build && node --env-file-if-exists=.env scripts/runBuyerFinderSpike.mjs",

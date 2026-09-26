@@ -47,21 +47,7 @@ contacts. It enables Row Level Security and revokes all table access from Supaba
 > Editor or the linked Supabase CLI workflow instead. For Buyer Finder activity logging, apply
 > `supabase/migrations/20260921093000_add_buyer_search_events.sql` only.
 
-## 3. One-time legacy data reconciliation
-
-To copy existing local records after applying the schema:
-
-```powershell
-npm run db:migrate:data
-```
-
-Set `SQLITE_SOURCE_PATH` only when the source is not `data/costings.sqlite`. The import is
-non-destructive and skips IDs already present in Postgres.
-
-This is a temporary one-time migration path, not a supported application runtime. Remove the command
-and importer after final record counts and representative records have been reconciled in Supabase.
-
-## 4. Start the application
+## 3. Start the application
 
 ```powershell
 npm run dev
