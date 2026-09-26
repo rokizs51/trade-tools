@@ -10,6 +10,7 @@ import {
 import { createBuyerDiscoveryOrchestrator } from "../dist/application/buyerDiscovery/index.js";
 import { OpenRouterModelClient } from "../dist/infrastructure/ai/index.js";
 import { createBuyerSearchJobRunner } from "./buyerSearchJobRunner.mjs";
+import { createDebugModelClient } from "./debugModelClient.mjs";
 
 export class BuyerSearchQueueFullError extends Error {
   constructor(maxQueuedSearches) {
@@ -29,11 +30,14 @@ export function createBuyerDiscoveryRuntime({
   logger,
 }) {
   const config = readBuyerDiscoveryConfig(env);
-  const modelClient = client ?? new OpenRouterModelClient({
+  const baseClient = client ?? new OpenRouterModelClient({
     apiKey: env.OPENROUTER_API_KEY,
     timeoutMs: config.limits.timeoutMs,
     gpt5ReasoningEffort: config.gpt5ReasoningEffort,
   });
+  const modelClient = booleanSetting(env.BUYER_DEBUG_RAW_OUTPUT, false, "BUYER_DEBUG_RAW_OUTPUT")
+    ? createDebugModelClient({ client: baseClient })
+    : baseClient;
   const orchestrator = createBuyerDiscoveryOrchestrator({
     client: modelClient,
     repository,
@@ -109,7 +113,7 @@ export function readBuyerDiscoveryConfig(env = process.env) {
       "BUYER_GPT5_REASONING_EFFORT",
     ),
     limits: {
-      maxSearchCalls: positiveInteger(env.BUYER_SEARCH_MAX_QUERIES, 3, "BUYER_SEARCH_MAX_QUERIES"),
+      maxSearchCalls: positiveInteger(env.BUYER_SEARCH_MAX_QUERIES, 6, "BUYER_SEARCH_MAX_QUERIES"),
       maxResultsPerSearch: positiveInteger(env.BUYER_SEARCH_MAX_RESULTS, 5, "BUYER_SEARCH_MAX_RESULTS"),
       maxRawCandidates: positiveInteger(env.BUYER_SEARCH_MAX_RAW_CANDIDATES, 25, "BUYER_SEARCH_MAX_RAW_CANDIDATES"),
       verificationConcurrency: positiveInteger(env.BUYER_VERIFICATION_CONCURRENCY, 3, "BUYER_VERIFICATION_CONCURRENCY"),

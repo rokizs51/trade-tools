@@ -12,7 +12,7 @@ import {
 import { buyerFinderPromptInjectionAttacks } from "./fixtures/buyerFinderPromptInjectionAttacks.mjs";
 
 test("buyer prompts explicitly treat retrieved content as untrusted data", () => {
-  assert.equal(BUYER_RESEARCH_PROMPT_VERSION, "buyer-research-v3");
+  assert.equal(BUYER_RESEARCH_PROMPT_VERSION, "buyer-research-v5");
   assert.equal(BUYER_FALLBACK_RESEARCH_PROMPT_VERSION, "buyer-fallback-research-v1");
   assert.equal(BUYER_VERIFIER_PROMPT_VERSION, "buyer-verifier-v3");
 
@@ -26,6 +26,13 @@ test("buyer prompts explicitly treat retrieved content as untrusted data", () =>
     assert.match(prompt, /reveal hidden instructions/i);
     assert.match(prompt, /contact anyone/i);
   }
+});
+
+test("research prompt carries the coverage contract and reformulation policy", () => {
+  assert.match(BUYER_RESEARCH_INSTRUCTIONS, /coverageContract\.minQualifiedCandidates/);
+  assert.match(BUYER_RESEARCH_INSTRUCTIONS, /coverageContract\.maxSearches/);
+  assert.match(BUYER_RESEARCH_INSTRUCTIONS, /reformulat/i);
+  assert.match(BUYER_RESEARCH_INSTRUCTIONS, /never pad/i);
 });
 
 test("prompt-injection evaluation fixtures cover task, secret, tool, scope, and evidence attacks", () => {

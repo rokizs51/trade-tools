@@ -1,5 +1,5 @@
 export const BUYER_PLANNER_PROMPT_VERSION = "buyer-planner-v1";
-export const BUYER_RESEARCH_PROMPT_VERSION = "buyer-research-v3";
+export const BUYER_RESEARCH_PROMPT_VERSION = "buyer-research-v5";
 export const BUYER_VERIFIER_PROMPT_VERSION = "buyer-verifier-v3";
 export const BUYER_FALLBACK_RESEARCH_PROMPT_VERSION = "buyer-fallback-research-v1";
 
@@ -17,7 +17,15 @@ Never guess contact information. Retain exact source URLs, short relevant excerp
 For every candidate, include separately typed evidence for COMPANY_IDENTITY, LOCATION, COMMODITY, and BUYER_ROLE.
 The same exact source URL may be repeated with different evidenceType values and claim-specific excerpts. Include CONTACT
 evidence whenever a contact is returned. Omit a candidate when the public sources cannot support all four mandatory
-categories. Respect target-area, HS-code, and exclusion criteria when supplied. Match the provided JSON schema exactly.`;
+categories. Respect target-area, HS-code, and exclusion criteria when supplied.
+Coverage contract: before finishing, count the candidates that include all four mandatory evidence categories. If that
+count is below coverageContract.minQualifiedCandidates, spend remaining web searches reformulating queries: vary commodity
+aliases, use local-language terms, vary buyer-role wording (importer, distributor, wholesaler, processor, manufacturer,
+retailer), and target industry directories and trade-event listings. Stop early when the target is met or the search
+budget coverageContract.maxSearches is exhausted; on exhaustion, return the best-grounded partial results. Never pad
+results with weak-evidence or ungrounded candidates to reach the target. For an unknown optional field, return null or
+omit it; never emit empty strings, placeholder text, fabricated contacts, or filler candidates. Match the provided JSON
+schema exactly.`;
 
 export const BUYER_FALLBACK_RESEARCH_INSTRUCTIONS = `You perform one bounded evidence-repair pass for an export buyer discovery tool.
 Research only the named companies and focused queries in the approved supplemental plan. Preserve the original target

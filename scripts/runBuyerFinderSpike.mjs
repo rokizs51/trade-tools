@@ -12,6 +12,7 @@ import {
   BUYER_RESEARCH_PROMPT_VERSION,
 } from "../dist/agents/buyerFinder/index.js";
 import { OpenRouterModelClient } from "../dist/infrastructure/ai/index.js";
+import { MAX_RESEARCH_TARGET_CANDIDATES } from "../dist/application/buyerDiscovery/index.js";
 
 const apiKey = process.env.OPENROUTER_API_KEY;
 
@@ -77,12 +78,16 @@ async function runSpike(key) {
       criteria: input,
       approvedPlan: planResult.data,
       promptVersion: BUYER_RESEARCH_PROMPT_VERSION,
+      coverageContract: {
+        minQualifiedCandidates: Math.min(input.resultLimit, MAX_RESEARCH_TARGET_CANDIDATES),
+        maxSearches: Number(process.env.BUYER_SEARCH_MAX_QUERIES ?? 6),
+      },
     }),
     schemaName: "buyer_candidate_batch",
     schemaDescription: "Publicly sourced potential buyer companies.",
     outputSchema: CandidateBatchSchema,
     maxOutputTokens: 5_000,
-    maxSearchCalls: Number(process.env.BUYER_SEARCH_MAX_QUERIES ?? 3),
+    maxSearchCalls: Number(process.env.BUYER_SEARCH_MAX_QUERIES ?? 6),
     maxResultsPerSearch: Number(process.env.BUYER_SEARCH_MAX_RESULTS ?? 5),
     searchContextSize: "medium",
     onSearchComplete(search) {

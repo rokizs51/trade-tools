@@ -10,6 +10,10 @@ import type {
 } from "../../infrastructure/ai/types.js";
 import { BuyerCandidateBatchSchema, type BuyerCandidateBatch } from "./schemas.js";
 
+// The user result limit governs verification and persistence; the research target is capped
+// so a high limit (up to 25) cannot pressure the model into padding sparse markets.
+export const MAX_RESEARCH_TARGET_CANDIDATES = 10;
+
 export interface BuyerResearcherOptions {
   client: ModelClient;
   model: string;
@@ -44,6 +48,10 @@ export function createBuyerResearcher(options: BuyerResearcherOptions) {
           criteria: input,
           approvedPlan: plan,
           promptVersion,
+          coverageContract: {
+            minQualifiedCandidates: Math.min(input.resultLimit, MAX_RESEARCH_TARGET_CANDIDATES),
+            maxSearches: options.maxSearchCalls,
+          },
         }),
         schemaName: "buyer_candidate_batch",
         schemaDescription: options.schemaDescription ?? "Publicly sourced potential buyer companies.",
