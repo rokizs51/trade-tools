@@ -56,6 +56,20 @@ npm run dev
 Startup prints `Database: Supabase Postgres`. `DATABASE_URL` is mandatory and there is no implicit
 SQLite runtime fallback. `DATABASE_PROVIDER`, when present, must be `postgres`.
 
+## Running with Docker Compose
+
+With a populated `.env` (copy `.env.example`) present at the repository root:
+
+```powershell
+docker compose up --build -d
+```
+
+The image installs dependencies and compiles `dist/` during the build; `.env` is
+injected at runtime only and never baked into the image. The app serves on
+`http://localhost:4173` with a `GET /health` container healthcheck. Stop with
+`docker compose down`. Startup fails fast with a clear error when database or
+auth configuration is missing.
+
 ## Security boundary
 
 - Database credentials are server-only.
