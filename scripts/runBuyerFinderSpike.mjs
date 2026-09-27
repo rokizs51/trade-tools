@@ -12,7 +12,6 @@ import {
   BUYER_RESEARCH_PROMPT_VERSION,
 } from "../dist/agents/buyerFinder/index.js";
 import { OpenRouterModelClient } from "../dist/infrastructure/ai/index.js";
-import { MAX_RESEARCH_TARGET_CANDIDATES } from "../dist/application/buyerDiscovery/index.js";
 
 const apiKey = process.env.OPENROUTER_API_KEY;
 
@@ -70,6 +69,10 @@ async function runSpike(key) {
     .strict();
 
   console.error(`Planner complete in ${planResult.metadata.latencyMs} ms. Running research with ${researchModel}, then formatting with ${formattingModel}...`);
+  const searchBudget = Math.max(
+    Number(process.env.BUYER_SEARCH_MAX_QUERIES ?? 6),
+    Math.ceil(input.resultLimit / 3),
+  );
   const researchResult = await client.research({
     model: researchModel,
     formattingModel,
@@ -79,15 +82,15 @@ async function runSpike(key) {
       approvedPlan: planResult.data,
       promptVersion: BUYER_RESEARCH_PROMPT_VERSION,
       coverageContract: {
-        minQualifiedCandidates: Math.min(input.resultLimit, MAX_RESEARCH_TARGET_CANDIDATES),
-        maxSearches: Number(process.env.BUYER_SEARCH_MAX_QUERIES ?? 6),
+        minQualifiedCandidates: input.resultLimit,
+        maxSearches: searchBudget,
       },
     }),
     schemaName: "buyer_candidate_batch",
     schemaDescription: "Publicly sourced potential buyer companies.",
     outputSchema: CandidateBatchSchema,
     maxOutputTokens: 5_000,
-    maxSearchCalls: Number(process.env.BUYER_SEARCH_MAX_QUERIES ?? 6),
+    maxSearchCalls: searchBudget,
     maxResultsPerSearch: Number(process.env.BUYER_SEARCH_MAX_RESULTS ?? 5),
     searchContextSize: "medium",
     onSearchComplete(search) {

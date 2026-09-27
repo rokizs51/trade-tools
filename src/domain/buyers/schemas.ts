@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { normalizePhone, normalizeSourceUrl } from "./normalize.js";
 import {
   BUYER_TYPES,
   CANDIDATE_REVIEW_STATUSES,
@@ -88,6 +89,14 @@ export const CandidateContactSchema = z
       });
     }
 
+    if (contact.type === "PHONE" && normalizePhone(contact.value) === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["value"],
+        message: "Phone contacts must contain a plausible phone number.",
+      });
+    }
+
     if (contact.type === "CONTACT_PAGE" && !z.url().safeParse(contact.value).success) {
       context.addIssue({
         code: "custom",
@@ -96,6 +105,23 @@ export const CandidateContactSchema = z
       });
     }
   });
+
+// Single source of truth for contact->evidence grounding. Both the schema
+// superRefine and the sanitizer compare through these so the two paths can
+// never diverge on how a source URL is normalized (e.g. trailing slash, www,
+// tracking params), which previously let valid contacts delete their candidate.
+export function normalizeEvidenceUrls(urls: readonly string[]): Set<string> {
+  return new Set(
+    urls
+      .map((url) => normalizeSourceUrl(url))
+      .filter((url): url is string => Boolean(url)),
+  );
+}
+
+export function isContactGrounded(sourceUrl: string, evidenceUrls: Set<string>): boolean {
+  const grounded = normalizeSourceUrl(sourceUrl);
+  return grounded !== undefined && evidenceUrls.has(grounded);
+}
 
 export const ResearchCandidateSchema = z
   .object({
@@ -112,10 +138,10 @@ export const ResearchCandidateSchema = z
   })
   .strict()
   .superRefine((candidate, context) => {
-    const evidenceUrls = new Set(candidate.evidence.map((source) => source.url));
+    const evidenceUrls = normalizeEvidenceUrls(candidate.evidence.map((source) => source.url));
 
     for (const [index, contact] of candidate.contacts.entries()) {
-      if (!evidenceUrls.has(contact.sourceUrl)) {
+      if (!isContactGrounded(contact.sourceUrl, evidenceUrls)) {
         context.addIssue({
           code: "custom",
           path: ["contacts", index, "sourceUrl"],

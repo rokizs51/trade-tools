@@ -258,7 +258,7 @@ test("orchestrator runs planner, research, verification, scoring, and persistenc
     assert.equal(run.usage.inputTokens, 50);
     assert.equal(run.usage.outputTokens, 25);
     assert.equal(run.usage.estimatedCostUsd, "0.00600000");
-    assert.equal(run.modelConfig.promptVersions.verifier, "buyer-verifier-v3");
+    assert.equal(run.modelConfig.promptVersions.verifier, "buyer-verifier-v4");
     assert.equal(run.modelConfig.calls.length, 5);
     assert.equal(results.length, 1);
     assert.equal(results[0].company.name, "Good Imports");

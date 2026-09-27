@@ -34,6 +34,17 @@ test("removes common tracking parameters from source URLs", () => {
   );
 });
 
+test("treats www and apex host as the same grounding source URL", () => {
+  assert.equal(
+    normalizeSourceUrl("https://www.mikcoco.com/contact"),
+    normalizeSourceUrl("https://mikcoco.com/contact"),
+  );
+  assert.equal(
+    normalizeSourceUrl("https://www.mikcoco.com"),
+    normalizeSourceUrl("https://mikcoco.com"),
+  );
+});
+
 test("normalizes plausible phone numbers and rejects broken values", () => {
   assert.equal(normalizePhone("+971 (4) 123-4567"), "+97141234567");
   assert.equal(normalizePhone("123"), undefined);

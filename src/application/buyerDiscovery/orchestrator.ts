@@ -1,5 +1,7 @@
 import {
   BuyerSearchInputSchema,
+  isContactGrounded,
+  normalizeEvidenceUrls,
 } from "../../domain/buyers/schemas.js";
 import {
   deduplicateBuyerCandidates,
@@ -747,7 +749,7 @@ function retainGroundedCandidates(
       const normalized = normalizeSourceUrl(source.url);
       return normalized !== undefined && recovered.has(normalized);
     }).map((source) => ({ ...source, retrievedAt }));
-    const evidenceUrls = new Set(evidence.map((source) => normalizeSourceUrl(source.url)));
+    const evidenceUrls = normalizeEvidenceUrls(evidence.map((source) => source.url));
 
     if (evidence.length === 0) {
       decisions.push({
@@ -765,7 +767,7 @@ function retainGroundedCandidates(
     retained.push({
       ...candidate,
       evidence,
-      contacts: candidate.contacts.filter((contact) => evidenceUrls.has(normalizeSourceUrl(contact.sourceUrl))),
+      contacts: candidate.contacts.filter((contact) => isContactGrounded(contact.sourceUrl, evidenceUrls)),
     });
   }
 

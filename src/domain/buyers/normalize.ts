@@ -145,6 +145,9 @@ export function normalizeSourceUrl(value: string): string | undefined {
   }
 
   const url = new URL(normalizedUrl);
+  if (url.hostname.startsWith("www.")) {
+    url.hostname = url.hostname.slice(4);
+  }
   const trackingKeys = [...url.searchParams.keys()].filter((key) =>
     key.toLocaleLowerCase("en").startsWith("utm_") || ["gclid", "fbclid"].includes(key.toLocaleLowerCase("en")),
   );

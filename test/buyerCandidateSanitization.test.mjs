@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { BuyerCandidateBatchSchema, sanitizeBuyerCandidateBatchPayload } from "../dist/application/buyerDiscovery/schemas.js";
-import { createBuyerResearcher, MAX_RESEARCH_TARGET_CANDIDATES } from "../dist/application/buyerDiscovery/researcher.js";
+import { createBuyerResearcher } from "../dist/application/buyerDiscovery/researcher.js";
 
 const retrievedAt = "2026-09-26T09:00:00.000Z";
 
@@ -91,19 +91,82 @@ test("invalid evidence rows are discarded without discarding the candidate", () 
   assert.equal(parsed.candidates[0].evidence.length, 2);
 });
 
+test("a contact citing an evidence URL with formatting drift survives without killing the candidate", () => {
+  const payload = {
+    candidates: [
+      {
+        ...validCandidate("Drift Co"),
+        contacts: [
+          { type: "EMAIL", value: "info@drift.example", sourceUrl: "https://example.com/company_identity/", isPublicBusinessContact: true },
+        ],
+      },
+    ],
+  };
+
+  const parsed = BuyerCandidateBatchSchema.parse(payload);
+
+  assert.equal(parsed.candidates.length, 1);
+  assert.equal(parsed.candidates[0].contacts.length, 1);
+});
+
+test("an ungrounded contact is pruned while the candidate and its grounded contacts survive", () => {
+  const payload = {
+    candidates: [
+      {
+        ...validCandidate("Mixed Grounding Co"),
+        contacts: [
+          { type: "EMAIL", value: "info@grounded.example", sourceUrl: "https://example.com/company_identity", isPublicBusinessContact: true },
+          { type: "EMAIL", value: "ghost@nowhere.example", sourceUrl: "https://nowhere.example/contact", isPublicBusinessContact: true },
+        ],
+      },
+    ],
+  };
+
+  const parsed = BuyerCandidateBatchSchema.parse(payload);
+
+  assert.equal(parsed.candidates.length, 1);
+  assert.deepEqual(parsed.candidates[0].contacts.map((contact) => contact.value), ["info@grounded.example"]);
+});
+
+test("placeholder phone values are pruned instead of reaching persistence", () => {
+  const payload = {
+    candidates: [
+      {
+        ...validCandidate("Phone Placeholder Co"),
+        contacts: [
+          { type: "EMAIL", value: "info@phone.example", sourceUrl: "https://example.com/company_identity", isPublicBusinessContact: true },
+          { type: "PHONE", value: "Not displayed", sourceUrl: "https://example.com/company_identity", isPublicBusinessContact: true },
+          { type: "PHONE", value: "+61 419 201 215", sourceUrl: "https://example.com/company_identity", isPublicBusinessContact: true },
+        ],
+      },
+    ],
+  };
+
+  const parsed = BuyerCandidateBatchSchema.parse(payload);
+
+  assert.equal(parsed.candidates.length, 1);
+  assert.deepEqual(parsed.candidates[0].contacts.map((contact) => contact.value), [
+    "info@phone.example",
+    "+61 419 201 215",
+  ]);
+});
+
 test("non-object and candidate-free payloads pass through unchanged", () => {
   assert.deepEqual(sanitizeBuyerCandidateBatchPayload({ candidates: "nope" }), { candidates: "nope" });
   assert.equal(sanitizeBuyerCandidateBatchPayload("string"), "string");
 });
 
-async function captureCoverageContract(resultLimit) {
+async function captureResearchRequest(resultLimit) {
   let captured;
   const client = {
     async generateStructured() {
       throw new Error("not used");
     },
     async research(request) {
-      captured = JSON.parse(request.input).coverageContract;
+      captured = {
+        coverageContract: JSON.parse(request.input).coverageContract,
+        maxSearchCalls: request.maxSearchCalls,
+      };
       return {
         data: { candidates: [] },
         metadata: {},
@@ -123,7 +186,16 @@ async function captureCoverageContract(resultLimit) {
   return captured;
 }
 
-test("research coverage target is capped so high user result limits cannot pressure padding", async () => {
-  assert.deepEqual(await captureCoverageContract(20), { minQualifiedCandidates: MAX_RESEARCH_TARGET_CANDIDATES, maxSearches: 6 });
-  assert.equal((await captureCoverageContract(5)).minQualifiedCandidates, 5);
+test("research coverage target follows the user result limit", async () => {
+  assert.equal((await captureResearchRequest(20)).coverageContract.minQualifiedCandidates, 20);
+  assert.equal((await captureResearchRequest(5)).coverageContract.minQualifiedCandidates, 5);
+});
+
+test("search budget scales with the result limit, never below the configured base", async () => {
+  const at25 = await captureResearchRequest(25);
+  assert.equal(at25.maxSearchCalls, 9);
+  assert.equal(at25.coverageContract.maxSearches, 9);
+  const at10 = await captureResearchRequest(10);
+  assert.equal(at10.maxSearchCalls, 6);
+  assert.equal(at10.coverageContract.maxSearches, 6);
 });

@@ -10,9 +10,6 @@ import type {
 } from "../../infrastructure/ai/types.js";
 import { BuyerCandidateBatchSchema, type BuyerCandidateBatch } from "./schemas.js";
 
-// The user result limit governs verification and persistence; the research target is capped
-// so a high limit (up to 25) cannot pressure the model into padding sparse markets.
-export const MAX_RESEARCH_TARGET_CANDIDATES = 10;
 
 export interface BuyerResearcherOptions {
   client: ModelClient;
@@ -40,6 +37,9 @@ export function createBuyerResearcher(options: BuyerResearcherOptions) {
     ): Promise<ResearchCallResult<BuyerCandidateBatch>> {
       const instructions = options.instructions ?? BUYER_RESEARCH_INSTRUCTIONS;
       const promptVersion = options.promptVersion ?? BUYER_RESEARCH_PROMPT_VERSION;
+      // The configured value is a floor; a higher result limit buys proportionally
+      // more searches (~3 candidates per search) so the coverage target is reachable.
+      const searchBudget = Math.max(options.maxSearchCalls, Math.ceil(input.resultLimit / 3));
       return options.client.research({
         model: options.model,
         formattingModel: options.formattingModel,
@@ -49,15 +49,15 @@ export function createBuyerResearcher(options: BuyerResearcherOptions) {
           approvedPlan: plan,
           promptVersion,
           coverageContract: {
-            minQualifiedCandidates: Math.min(input.resultLimit, MAX_RESEARCH_TARGET_CANDIDATES),
-            maxSearches: options.maxSearchCalls,
+            minQualifiedCandidates: input.resultLimit,
+            maxSearches: searchBudget,
           },
         }),
         schemaName: "buyer_candidate_batch",
         schemaDescription: options.schemaDescription ?? "Publicly sourced potential buyer companies.",
         outputSchema: BuyerCandidateBatchSchema,
         maxOutputTokens: 8_000,
-        maxSearchCalls: options.maxSearchCalls,
+        maxSearchCalls: searchBudget,
         maxResultsPerSearch: options.maxResultsPerSearch,
         searchContextSize: options.searchContextSize ?? "medium",
         signal: runOptions.signal,

@@ -4,6 +4,8 @@ import {
   CandidateContactSchema,
   EvidenceSourceSchema,
   ResearchCandidateSchema,
+  isContactGrounded,
+  normalizeEvidenceUrls,
 } from "../../domain/buyers/schemas.js";
 import type { ResearchCandidate } from "../../domain/buyers/types.js";
 
@@ -32,10 +34,24 @@ export function sanitizeBuyerCandidateBatchPayload(value: unknown): unknown {
       .flatMap((candidate) => {
         if (!candidate || typeof candidate !== "object") return [];
         const raw = candidate as Record<string, unknown>;
+        const evidence = Array.isArray(raw.evidence)
+          ? raw.evidence.filter(isValidPlainObject).filter((row) => EvidenceSourceSchema.safeParse(row).success)
+          : raw.evidence;
+        // Ground contacts against the evidence that actually survived pruning.
+        // A contact citing a dropped or malformed evidence row is removed on its
+        // own instead of failing the schema and deleting the whole candidate.
+        const grounded = Array.isArray(raw.contacts)
+          ? raw.contacts.filter(isValidPlainObject).filter((contact) => CandidateContactSchema.safeParse(contact).success)
+          : raw.contacts;
+        const evidenceUrls = Array.isArray(evidence)
+          ? normalizeEvidenceUrls(evidence.map((row) => (row as { url?: string }).url ?? ""))
+          : new Set<string>();
         const repaired = {
           ...raw,
-          ...(Array.isArray(raw.contacts) ? { contacts: raw.contacts.filter(isValidPlainObject).filter((contact) => CandidateContactSchema.safeParse(contact).success) } : {}),
-          ...(Array.isArray(raw.evidence) ? { evidence: raw.evidence.filter(isValidPlainObject).filter((evidence) => EvidenceSourceSchema.safeParse(evidence).success) } : {}),
+          evidence,
+          ...(Array.isArray(grounded)
+            ? { contacts: grounded.filter((contact) => isContactGrounded((contact as { sourceUrl?: string }).sourceUrl ?? "", evidenceUrls)) }
+            : {}),
         };
         return ResearchCandidateSchema.safeParse(repaired).success ? [repaired] : [];
       }),
