@@ -12,15 +12,17 @@
     "buyer:eval": "npm run build && node --env-file-if-exists=.env scripts/runBuyerFinderEvaluation.mjs",
     "buyer:eval:score": "npm run build && node scripts/scoreBuyerFinderEvaluation.mjs",
     "dev": "npm run build && node --env-file-if-exists=.env scripts/serve.mjs",
-    "test": "npm run build && node test/calculateCosting.test.mjs && node test/persistence.test.mjs && node test/warnings.test.mjs && node test/workspaceRoute.test.mjs && node test/sqliteRepository.test.mjs && node test/loadUnits.test.mjs && node test/loadPacking.test.mjs && node test/loadPositions.test.mjs && node test/loadComparison.test.mjs && node test/loadHardening.test.mjs && node test/loadPlanRepository.test.mjs && node test/loadCostingIntegration.test.mjs && node test/buyerSchemas.test.mjs && node test/buyerCandidateSanitization.test.mjs && node test/buyerNormalization.test.mjs && node test/buyerScoring.test.mjs && node test/buyerDeduplication.test.mjs && node test/buyerFallback.test.mjs && node test/buyerEvaluation.test.mjs && node test/buyerPromptSecurity.test.mjs && node test/openRouterModelClient.test.mjs && node test/buyerRepository.test.mjs && node test/postgresBuyerRepository.test.mjs && node test/buyerPipelineLogger.test.mjs && node test/buyerJobRunner.test.mjs && node test/buyerOrchestrator.test.mjs && node test/buyerRuntime.test.mjs && node test/buyerDebugModelClient.test.mjs && node test/buyerApi.test.mjs && node test/supabaseAuth.test.mjs && node test/postgresConfiguration.test.mjs && node test/outreachTemplate.test.mjs"
+    "test": "npm run build && node test/calculateCosting.test.mjs && node test/persistence.test.mjs && node test/warnings.test.mjs && node test/workspaceRoute.test.mjs && node test/sqliteRepository.test.mjs && node test/loadUnits.test.mjs && node test/loadPacking.test.mjs && node test/loadPositions.test.mjs && node test/loadComparison.test.mjs && node test/loadHardening.test.mjs && node test/loadPlanRepository.test.mjs && node test/loadCostingIntegration.test.mjs && node test/buyerSchemas.test.mjs && node test/buyerCandidateSanitization.test.mjs && node test/buyerNormalization.test.mjs && node test/buyerScoring.test.mjs && node test/buyerDeduplication.test.mjs && node test/buyerFallback.test.mjs && node test/buyerEvaluation.test.mjs && node test/buyerPromptSecurity.test.mjs && node test/openRouterModelClient.test.mjs && node test/buyerRepository.test.mjs && node test/postgresBuyerRepository.test.mjs && node test/buyerPipelineLogger.test.mjs && node test/buyerJobRunner.test.mjs && node test/buyerOrchestrator.test.mjs && node test/buyerRuntime.test.mjs && node test/buyerDebugModelClient.test.mjs && node test/buyerApi.test.mjs && node test/supabaseAuth.test.mjs && node test/postgresConfiguration.test.mjs && node test/outreachTemplate.test.mjs && node test/emailSender.test.mjs"
   },
   "devDependencies": {
+    "@types/nodemailer": "^8.0.2",
     "@types/three": "^0.185.4",
     "typescript": "^5.9.2"
   },
   "dependencies": {
     "@openrouter/sdk": "^1.2.136",
     "jose": "6.2.12",
+    "nodemailer": "^10.0.10",
     "postgres": "^3.4.9",
     "three": "^0.185.1",
     "zod": "^4.6.5"
