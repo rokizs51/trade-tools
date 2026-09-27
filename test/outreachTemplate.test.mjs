@@ -8,6 +8,8 @@ import {
   renderEmailTemplate,
 } from "../dist/domain/outreach/emailTemplate.js";
 
+import { EmailTemplateSchema, OutreachSendSchema } from "../dist/domain/outreach/schemas.js";
+
 const values = {
   company: "Acme Foods",
   country: "Thailand",
@@ -54,4 +56,23 @@ test("default template has no unknown placeholders", () => {
     [...PLACEHOLDER_KEYS],
     ["company", "country", "city", "commodity", "buyer_type", "contact_name", "our_company"],
   );
+});
+
+test("EmailTemplateSchema enforces bounds and strict shape", () => {
+  assert.equal(EmailTemplateSchema.safeParse({ subject: "Hello {company}", body: "Body" }).success, true);
+  assert.equal(EmailTemplateSchema.safeParse({ subject: "", body: "x" }).success, false);
+  assert.equal(EmailTemplateSchema.safeParse({ subject: "x".repeat(501), body: "x" }).success, false);
+  assert.equal(EmailTemplateSchema.safeParse({ subject: "x", body: "y".repeat(20001) }).success, false);
+  assert.equal(EmailTemplateSchema.safeParse({ subject: "x", body: "y", extra: 1 }).success, false);
+});
+
+test("OutreachSendSchema requires trimmed ids and text", () => {
+  assert.equal(
+    OutreachSendSchema.safeParse({ buyerMatchId: "m1", contactId: "c1", subject: " s ", body: " b " }).success,
+    true,
+  );
+  const parsed = OutreachSendSchema.parse({ buyerMatchId: " m1 ", contactId: "c1", subject: "s", body: "b" });
+  assert.equal(parsed.buyerMatchId, "m1");
+  assert.equal(OutreachSendSchema.safeParse({ buyerMatchId: "", contactId: "c1", subject: "s", body: "b" }).success, false);
+  assert.equal(OutreachSendSchema.safeParse({ buyerMatchId: "m1", subject: "s", body: "b" }).success, false);
 });
