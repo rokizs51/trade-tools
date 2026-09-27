@@ -60,6 +60,7 @@ export class OutreachUi {
       chip.className = "placeholder-chip";
       chip.textContent = `{${key}}`;
       chip.addEventListener("click", () => this.insertToken(`{${key}}`));
+      chip.addEventListener("mousedown", (event) => event.preventDefault());
       container.appendChild(chip);
     }
   }
