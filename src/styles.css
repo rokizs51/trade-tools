@@ -1532,3 +1532,10 @@ dd {
     animation: none;
   }
 }
+
+.placeholder-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.placeholder-chip { font-family: var(--font-mono, monospace); font-size: 12px; padding: 4px 8px; border-radius: 6px; border: 1px solid #cbd5e1; background: #f8fafc; cursor: pointer; }
+.outreach-field { display: block; margin: 12px 0; }
+.outreach-field span { display: block; font-weight: 600; margin-bottom: 4px; }
+.outreach-field input, .outreach-field textarea { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #cbd5e1; }
+.outreach-preview { white-space: pre-wrap; word-break: break-word; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; font-family: var(--font-mono, monospace); font-size: 13px; }

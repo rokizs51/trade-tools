@@ -30,6 +30,7 @@ import {
 } from "./domain/load/index.js";
 import { LoadViewer, type CameraPreset, type ContainerDisplayMode } from "./loadViewer.js";
 import { BuyerFinderUi } from "./buyerFinderUi.js";
+import { OutreachUi } from "./outreachUi.js";
 import { authenticatedFetch, initializeAuthentication } from "./auth.js";
 import {
   defaultWorkspaceRoute,
@@ -118,6 +119,8 @@ const loadArchiveStatus = mustGetElement("load-archive-status");
 const cameraPresetButtons = document.querySelectorAll<HTMLButtonElement>("[data-camera-preset]");
 const loadViewer = new LoadViewer(mustGetElement("load-viewer"));
 const buyerFinderUi = new BuyerFinderUi((subview) => setWorkspace("buyer", subview));
+const outreachUi = new OutreachUi();
+const showOutreachButton = mustGetElement("show-outreach-view");
 let currentCostingId: string | undefined;
 let activeTool: ToolName = "costing";
 let activeSubview: ToolSubview = "calculator";
@@ -148,6 +151,7 @@ showBuyerToolButton.addEventListener("click", () => setWorkspace("buyer", "calcu
 showCalculatorButton.addEventListener("click", () => setWorkspace(activeTool, "calculator"));
 showSavedPlansButton.addEventListener("click", () => setWorkspace(activeTool, "saved"));
 showArchivedPlansButton.addEventListener("click", () => setWorkspace(activeTool, "archived"));
+showOutreachButton.addEventListener("click", () => setWorkspace("buyer", "outreach"));
 historyRows.addEventListener("click", handleHistoryAction);
 archiveRows.addEventListener("click", handleHistoryAction);
 loadForm.addEventListener("submit", handleCalculateLoad);
@@ -837,9 +841,16 @@ function setWorkspace(
   loadSavedSection.hidden = !showLoadSaved;
   loadArchiveSection.hidden = !showLoadArchived;
   if (tool === "buyer") {
-    buyerFinderUi.show(subview);
+    if (subview === "outreach") {
+      buyerFinderUi.hide();
+      outreachUi.show(true);
+    } else {
+      buyerFinderUi.show(subview);
+      outreachUi.show(false);
+    }
   } else {
     buyerFinderUi.hide();
+    outreachUi.hide();
   }
 
   showCostingToolButton.classList.toggle("is-active", tool === "costing");
@@ -848,6 +859,8 @@ function setWorkspace(
   showCalculatorButton.classList.toggle("is-active", subview === "calculator");
   showSavedPlansButton.classList.toggle("is-active", subview === "saved");
   showArchivedPlansButton.classList.toggle("is-active", subview === "archived");
+  showOutreachButton.hidden = tool !== "buyer";
+  showOutreachButton.classList.toggle("is-active", tool === "buyer" && subview === "outreach");
   showCalculatorButton.textContent = tool === "buyer" ? "Search" : "Calculator";
   showSavedPlansButton.textContent = tool === "buyer" ? "History" : "Saved Plans";
   showArchivedPlansButton.textContent = tool === "buyer" ? "Saved Buyers" : "Archived";
@@ -915,6 +928,7 @@ function getPageTitle(tool: ToolName, subview: ToolSubview): string {
   if (tool === "buyer") {
     if (subview === "saved") return "Buyer Finder History";
     if (subview === "archived") return "Saved Buyers";
+    if (subview === "outreach") return "Email Template";
     return "Buyer Finder";
   }
 
