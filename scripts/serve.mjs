@@ -5,7 +5,10 @@ import { extname, join, normalize, resolve } from "node:path";
 import { createBuyerDiscoveryRuntime } from "./buyerDiscoveryRuntime.mjs";
 import { createBuyerApiHandler } from "./buyerApi.mjs";
 import { createBuyerPipelineLogger } from "./buyerPipelineLogger.mjs";
+import { createOutreachApiHandler } from "./outreachApi.mjs";
 import { createPersistence } from "./persistence.mjs";
+import { DEFAULT_EMAIL_TEMPLATE } from "../dist/domain/outreach/index.js";
+import { createSmtpMailSender, readSmtpSettings } from "../dist/infrastructure/email/index.js";
 import {
   AuthenticationError,
   createBrowserAuthConfig,
@@ -29,6 +32,23 @@ const buyerRuntime = process.env.OPENROUTER_API_KEY
 const handleBuyerApiRequest = createBuyerApiHandler({
   repository: buyerRepository,
   runtime: buyerRuntime,
+});
+const outreachRepository = persistence.outreachRepository;
+const smtpSettings = readSmtpSettings(process.env);
+const mailSender = smtpSettings ? createSmtpMailSender(smtpSettings) : null;
+const maxSendsPerDay = Number(process.env.OUTREACH_MAX_SENDS_PER_DAY ?? 50);
+const handleOutreachApiRequest = createOutreachApiHandler({
+  outreachRepository,
+  buyerRepository,
+  mailSender,
+  config: {
+    defaultTemplate: DEFAULT_EMAIL_TEMPLATE,
+    ourCompany: smtpSettings?.ourCompany ?? "",
+    fromAddress: smtpSettings?.fromAddress ?? "",
+    maxSendsPerDay: Number.isInteger(maxSendsPerDay) && maxSendsPerDay > 0 ? maxSendsPerDay : 50,
+    mailConfigured: Boolean(smtpSettings),
+  },
+  createId: randomUUID,
 });
 
 const contentTypes = {
@@ -116,6 +136,10 @@ function sendBrowserAuthConfig(response, config) {
 async function handleApiRequest(request, response, url) {
   try {
     if (await handleBuyerApiRequest(request, response, url)) {
+      return;
+    }
+
+    if (await handleOutreachApiRequest(request, response, url)) {
       return;
     }
 

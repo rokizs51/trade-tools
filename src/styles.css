@@ -1532,3 +1532,18 @@ dd {
     animation: none;
   }
 }
+
+.placeholder-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.placeholder-chip { font-family: var(--font-mono, monospace); font-size: 12px; padding: 4px 8px; border-radius: 6px; border: 1px solid #cbd5e1; background: #f8fafc; cursor: pointer; }
+.outreach-field { display: block; margin: 12px 0; }
+.outreach-field span { display: block; font-weight: 600; margin-bottom: 4px; }
+.outreach-field input, .outreach-field textarea { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #cbd5e1; }
+.outreach-preview { white-space: pre-wrap; word-break: break-word; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; font-family: var(--font-mono, monospace); font-size: 13px; }
+.buyer-send-panel { margin-top: 12px; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; background: #f8fafc; }
+.buyer-send-field { display: block; margin-bottom: 10px; }
+.buyer-send-field span { display: block; font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+.buyer-send-panel input, .buyer-send-panel select, .buyer-send-panel textarea { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #cbd5e1; }
+.buyer-send-actions { display: flex; gap: 8px; }
+.buyer-send-status { margin-top: 8px; font-size: 13px; }
+.contacted-badge { display: inline-block; font-size: 12px; color: #64748b; margin: 4px 0; }
+.contacted-badge.is-contacted { color: #16a34a; font-weight: 600; }

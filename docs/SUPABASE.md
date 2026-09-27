@@ -47,21 +47,7 @@ contacts. It enables Row Level Security and revokes all table access from Supaba
 > Editor or the linked Supabase CLI workflow instead. For Buyer Finder activity logging, apply
 > `supabase/migrations/20260921093000_add_buyer_search_events.sql` only.
 
-## 3. One-time legacy data reconciliation
-
-To copy existing local records after applying the schema:
-
-```powershell
-npm run db:migrate:data
-```
-
-Set `SQLITE_SOURCE_PATH` only when the source is not `data/costings.sqlite`. The import is
-non-destructive and skips IDs already present in Postgres.
-
-This is a temporary one-time migration path, not a supported application runtime. Remove the command
-and importer after final record counts and representative records have been reconciled in Supabase.
-
-## 4. Start the application
+## 3. Start the application
 
 ```powershell
 npm run dev
@@ -69,6 +55,20 @@ npm run dev
 
 Startup prints `Database: Supabase Postgres`. `DATABASE_URL` is mandatory and there is no implicit
 SQLite runtime fallback. `DATABASE_PROVIDER`, when present, must be `postgres`.
+
+## Running with Docker Compose
+
+With a populated `.env` (copy `.env.example`) present at the repository root:
+
+```powershell
+docker compose up --build -d
+```
+
+The image installs dependencies and compiles `dist/` during the build; `.env` is
+injected at runtime only and never baked into the image. The app serves on
+`http://localhost:4173` with a `GET /health` container healthcheck. Stop with
+`docker compose down`. Startup fails fast with a clear error when database or
+auth configuration is missing.
 
 ## Security boundary
 

@@ -61,6 +61,7 @@
         <button id="show-calculator" class="view-button is-active" type="button">Calculator</button>
         <button id="show-saved-plans" class="view-button" type="button">Saved Plans</button>
         <button id="show-archived-plans" class="view-button" type="button">Archived</button>
+        <button id="show-outreach-view" class="view-button" type="button" hidden>Email</button>
       </nav>
 
       <section class="editor" aria-labelledby="editor-title" hidden>
@@ -736,6 +737,34 @@
           <div id="buyer-saved-list" class="buyer-saved-list"></div>
           <p id="buyer-saved-empty" class="empty-state">No approved buyers yet. Approve a candidate from a search result to save it here.</p>
           <p id="buyer-saved-error" class="error-message" role="alert"></p>
+        </div>
+      </section>
+
+      <section id="buyer-outreach-section" class="buyer-section" aria-labelledby="buyer-outreach-title" hidden>
+        <div class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Outreach</p>
+              <h2 id="buyer-outreach-title">Email template</h2>
+            </div>
+            <button id="outreach-save" class="text-button" type="button">Save template</button>
+          </div>
+          <p id="outreach-config-warning" class="summary-text" hidden></p>
+          <label class="outreach-field">
+            <span>Subject</span>
+            <input id="outreach-subject" type="text" maxlength="500" />
+          </label>
+          <label class="outreach-field">
+            <span>Body</span>
+            <textarea id="outreach-body" rows="14" maxlength="20000"></textarea>
+          </label>
+          <div id="outreach-placeholders" class="placeholder-chips"></div>
+          <p id="outreach-unknown" class="summary-text" hidden></p>
+          <h3>Preview</h3>
+          <pre id="outreach-preview-subject" class="outreach-preview"></pre>
+          <pre id="outreach-preview-body" class="outreach-preview"></pre>
+          <p id="outreach-status" class="save-status"></p>
+          <p id="outreach-error" class="error-message" role="alert"></p>
         </div>
       </section>
     </main>

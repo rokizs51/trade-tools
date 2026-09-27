@@ -1,5 +1,5 @@
 export type ToolName = "costing" | "load" | "buyer";
-export type ToolSubview = "calculator" | "saved" | "archived";
+export type ToolSubview = "calculator" | "saved" | "archived" | "outreach";
 
 export type WorkspaceRoute = {
   tool: ToolName;
@@ -16,16 +16,19 @@ const routePaths: Record<ToolName, Record<ToolSubview, string>> = {
     calculator: "costing/calculator",
     saved: "costing/saved",
     archived: "costing/archived",
+    outreach: "costing/outreach",
   },
   load: {
     calculator: "load/calculator",
     saved: "load/saved",
     archived: "load/archived",
+    outreach: "load/outreach",
   },
   buyer: {
     calculator: "buyer/search",
     saved: "buyer/history",
     archived: "buyer/saved-buyers",
+    outreach: "buyer/outreach",
   },
 };
 

@@ -2,6 +2,7 @@ import { createPostgresBuyerRepository } from "./postgresBuyerRepository.mjs";
 import { createPostgresClient } from "./postgresClient.mjs";
 import { createPostgresCostingRepository } from "./postgresCostingRepository.mjs";
 import { createPostgresLoadPlanRepository } from "./postgresLoadPlanRepository.mjs";
+import { createPostgresOutreachRepository } from "./postgresOutreachRepository.mjs";
 
 export function createPersistence({ root = process.cwd(), env = process.env } = {}) {
   const provider = resolveDatabaseProvider(env);
@@ -12,6 +13,7 @@ export function createPersistence({ root = process.cwd(), env = process.env } = 
     costingRepository: createPostgresCostingRepository(sql),
     loadPlanRepository: createPostgresLoadPlanRepository(sql),
     buyerRepository: createPostgresBuyerRepository(sql),
+    outreachRepository: createPostgresOutreachRepository(sql),
     async close() { await sql.end(); },
   };
 }
