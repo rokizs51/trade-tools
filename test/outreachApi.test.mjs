@@ -160,3 +160,19 @@ test("POST send returns 503 when mail is not configured", async () => {
     assert.equal(body.error.code, "MAIL_NOT_CONFIGURED");
   }, { mailConfigured: false });
 });
+
+test("POST send returns 404 when the buyer match does not exist", async () => {
+  await withServer(async (base) => {
+    const { status, body } = await json(base, "/api/buyer-outreach/send", { method: "POST", body: JSON.stringify({ buyerMatchId: "ghost", contactId: "ct1", subject: "Hi", body: "B" }) });
+    assert.equal(status, 404);
+    assert.equal(body.error.code, "BUYER_MATCH_NOT_FOUND");
+  }, { mailSender: { async send() {} } });
+});
+
+test("POST send returns 503 when config claims configured but no sender is present", async () => {
+  await withServer(async (base) => {
+    const { status, body } = await json(base, "/api/buyer-outreach/send", { method: "POST", body: JSON.stringify({ buyerMatchId: "m1", contactId: "ct1", subject: "Hi", body: "B" }) });
+    assert.equal(status, 503);
+    assert.equal(body.error.code, "MAIL_NOT_CONFIGURED");
+  }, { mailSender: undefined });
+});
