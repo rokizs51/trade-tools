@@ -281,6 +281,7 @@ function toApiResult(match) {
       retrievedAt: source.retrievedAt,
     })),
     contacts: match.contacts.map((contact) => ({
+      id: contact.id,
       type: contact.type,
       value: contact.value,
       label: contact.label,

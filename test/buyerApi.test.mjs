@@ -203,6 +203,7 @@ test("buyer API returns ranked results with public contact provenance", async ()
     assert.equal(body.results.length, 1);
     assert.equal(body.results[0].company.name, "Example Imports LLC");
     assert.equal(body.results[0].contacts[0].sourceUrl, sourceUrl);
+    assert.equal(typeof body.results[0].contacts[0].id, "string");
     assert.equal("normalizedName" in body.results[0].company, false);
   });
 });
