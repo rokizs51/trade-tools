@@ -30,8 +30,12 @@ input → 4 research agents find companies → list → human review (approve) �
 - `buyer_matches.review_status` already supports `NEW / APPROVED / REJECTED` with a PATCH endpoint; the "Saved Buyers" UI view exists.
 - `buyer_contacts` stores `EMAIL / PHONE / CONTACT_PAGE` values with source provenance.
 - No email/mailer code exists anywhere yet.
-- New tables follow the workspace composite-FK pattern from
-  `20260920122500_enforce_buyer_workspace_relationships.sql`.
+- **No workspace scoping**: the workspace authorization migrations
+  (`20260920122158`/`20260920122500`) were fully reverted by `20260920124247` —
+  no table has a `workspace_id` column today. New tables are app-singleton, like
+  the current buyer tables.
+- Buyer matches API (`toApiResult`) already hydrates contacts; it will additionally
+  expose each contact's `id` so the send request can reference a contact by id.
 - Only new dependency: `nodemailer` (AGENTS.md allows dependencies when necessary;
   raw SMTP is not worth it).
 
@@ -42,7 +46,7 @@ Saved Buyers row (APPROVED match, EMAIL contacts from buyer_contacts)
    │ click ✉ Send
    ▼
 Send panel: recipient dropdown + subject/body pre-rendered from template → human tweaks
-   │ POST /api/outreach/send {buyerMatchId, contactId, subject, body}
+   │ POST /api/buyer-outreach/send {buyerMatchId, contactId, subject, body}
    ▼
 Outreach API: contact must belong to that company · match must be APPROVED
    │          · daily send cap enforced
@@ -68,19 +72,21 @@ buyer_outreach_sends row (SENT or FAILED, exact copy sent) ── UI badge updat
   `dist/`) to pre-render the send panel, and the server imports the same code for the
   template view's sample preview — one implementation, per AGENTS.md no-duplication rule.
 - **Outreach API + repository** — mounted in `serve.mjs` beside the existing buyer
-  routes, workspace-scoped, same auth middleware as `/api/buyer-*`.
+  routes, same auth middleware as `/api/buyer-*`.
 - **UI** — send panel on Saved Buyers + a new "Email" subview for the template
   editor (extends `ToolSubview` routing in `workspaceRoute.ts`).
 
 ## Data model (2 new tables)
 
+Both are app-singleton (no `workspace_id`, since the workspace migration was reverted).
+
 ### `email_templates`
-One row per workspace (upsert on save; single default template — a template gallery
-is YAGNI, per-email tweaks cover variation).
+One global row seeded with the built-in default template (upsert on save; a template
+gallery is YAGNI, per-email tweaks cover variation). Seeded by the migration.
 
 | column | notes |
 |---|---|
-| `workspace_id` | FK to workspaces, composite-unique with `id` |
+| `id` | single row, `'default'` |
 | `subject`, `body` | plain text, length-capped |
 | `updated_at` | |
 
@@ -88,31 +94,43 @@ is YAGNI, per-email tweaks cover variation).
 
 | column | notes |
 |---|---|
-| `id`, `workspace_id` | composite FK pattern as `buyer_sources` |
-| `buyer_match_id` | composite FK → `buyer_matches(id, workspace_id)`, on delete cascade |
-| `company_id` | FK → company, so contact history survives run deletion |
+| `id` | text primary key |
+| `buyer_match_id` | FK → `buyer_matches(id)`, on delete cascade |
+| `company_id` | FK → `buyer_companies(id)`, so contact history survives run deletion |
 | `recipient_email` | resolved server-side from `buyer_contacts`, never from client text |
 | `subject`, `body` | exact text sent |
 | `status` | `SENT` \| `FAILED` |
 | `error_message` | nullable, excerpt on failure |
 | `sent_at` | timestamptz |
 
-"Contacted" = latest `SENT` per **company** (across all runs/matches in the workspace).
+"Contacted" = latest `SENT` per **company** (across all runs/matches).
 
 ## API surface
 
-All under existing `/api/` auth + workspace middleware.
+All under existing `/api/` auth middleware. Outreach is a **separate handler**
+(`createOutreachApiHandler` in a new `scripts/outreachApi.mjs`) mounted in `serve.mjs`
+immediately after `handleBuyerApiRequest`, gated on `pathname.startsWith("/api/buyer-outreach")`.
+This keeps it independently testable (matching the existing per-feature handler style,
+where each module has its own `sendJson`/`sendError`/`readJsonBody` helpers). The
+handler is constructed with `{ outreachRepository, buyerRepository, mailSender, config }`.
+
+The domain module lives at `src/domain/outreach/` (compiled to `dist/domain/outreach/`),
+mirroring `src/domain/buyers/`.
 
 | Route | Behavior |
 |---|---|
-| `GET /api/outreach/template` | Workspace template (built-in defaults if never saved) + `mailConfigured: boolean` |
-| `PUT /api/outreach/template` | Save `{subject, body}`; subject ≤ 500, body ≤ 20 000 chars; non-empty |
-| `GET /api/buyer-matches` (extend) | Each match gains `outreach: {sentCount, lastSentAt}` and `emailContacts: [{id, value, label}]`; one grouped query, no N+1 |
-| `POST /api/outreach/send` | `{buyerMatchId, contactId, subject, body}` → validate → render nothing (client sends final text) → SMTP send → log row → return send row |
+| `GET /api/buyer-outreach/template` | Global template (built-in defaults if never saved) + `mailConfigured: boolean` + `sender: { fromAddress, ourCompany }` + `placeholders: string[]` |
+| `PUT /api/buyer-outreach/template` | Save `{subject, body}`; subject ≤ 500, body ≤ 20 000 chars; non-empty |
+| `GET /api/buyer-outreach/summaries` | Per-company outreach summary map `{ [companyId]: { sentCount, lastSentAt } }` for the Contacted badges (one grouped query) |
+| `POST /api/buyer-outreach/send` | `{buyerMatchId, contactId, subject, body}` → validate → SMTP send → log row → return send row |
+
+Note: `toApiResult` in `buyerApi.mjs` is extended to expose `contact.id` on each contact
+so the client can send `contactId`. That is the only change needed to the existing buyer
+results endpoint for the send flow.
 
 Validation rules on send:
 
-- `contactId` must be an `EMAIL` contact of the match's company in this workspace → else 409.
+- `contactId` must be an `EMAIL` contact of the match's company → else 409.
 - Match `review_status` must be `APPROVED` → else 409.
 - `mailConfigured` → else 409.
 - Daily cap `OUTREACH_MAX_SENDS_PER_DAY` (default 50): counts **all send rows created
@@ -122,15 +140,18 @@ Validation rules on send:
 
 ## UI
 
-### Saved Buyers (extend)
+### Saved Buyers (extend — it renders `buyer-saved-card` elements)
 
-- New **Contacted** column: badge `✉ {date} (n)` when SENT rows exist per company, dash otherwise.
-- **Send** button on APPROVED rows with ≥1 EMAIL contact; disabled with a reason otherwise:
-  "Not approved" / "No email found" / "Mail not configured".
-- Send panel (inline): recipient dropdown (first contact preselected), editable Subject +
-  Body textarea pre-rendered from template with that company's values, warning line when the
-  template contains unknown placeholders, **[Cancel] [Send]**. On result: toast + badge update.
-  Retry (manual, one attempt per click) on failure.
+- **Contacted badge** on each saved-buyer card: `✉ {date} (n)` when SENT rows exist for
+  that company, dash otherwise. Badge data comes from `GET /api/buyer-outreach/summaries`.
+- **Send email** button on each card; disabled with a reason tooltip when the company has
+  no EMAIL contact or when mail is not configured.
+- Send panel (inline within the card): recipient dropdown (first EMAIL contact
+  preselected), editable Subject + Body textarea pre-rendered from the template with that
+  company's values, a warning line when the template contains unknown placeholders or omits
+  `{our_company}`, and **[Cancel] [Send]**. On success the panel closes, a status line
+  confirms, and the card's Contacted badge updates. On failure the panel stays open with
+  the error + a Retry button (manual, one attempt per click).
 
 ### Email subview (new, 4th tab of the buyer tool)
 
@@ -161,7 +182,7 @@ set env vars, restart.
 - Rendering safety: template text and scraped values reach the DOM only via
   `textContent` / `.value` — no innerHTML on untrusted strings.
 - Abuse guardrails: recipients resolvable only via stored contact ids; body length caps;
-  daily cap; all sends logged with author workspace.
+  daily cap; every send logged with its full rendered content.
 - Soft compliance hint: preview warns if `{our_company}` is absent from the body.
 
 ## Testing
