@@ -8,7 +8,11 @@ create table if not exists public.email_templates (
 
 create table if not exists public.buyer_outreach_sends (
   id text primary key,
-  buyer_match_id text not null references public.buyer_matches(id) on delete cascade,
+  -- Not foreign keys, on purpose: a cascade FK would erase this audit row when the
+  -- originating search run is deleted, and a RESTRICT FK would block deleting a run
+  -- that has ever emailed. The send log is the durable audit trail, so it survives
+  -- run deletion; the ids are kept as plain references for grouping and triage.
+  buyer_match_id text not null,
   company_id text not null,
   recipient_email text not null,
   subject text not null,

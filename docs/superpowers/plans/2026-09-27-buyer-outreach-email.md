@@ -17,7 +17,7 @@
 - TypeScript uses `exactOptionalPropertyTypes` + `noUncheckedIndexedAccess`: build optional fields with conditional spreads (`...(v ? { k: v } : {})`), and guard `rows[0]`/index access.
 - All untrusted strings (company names, scraped data, edited email text) reach the DOM via `textContent` / `.value` / `createElement(...,text)` only — never `innerHTML`.
 - Server responses must never include SMTP credentials; `fromAddress` and `ourCompany` are the only sender fields exposed.
-- Two tables are app-singleton (no `workspace_id` — that migration was reverted). The send log's `company_id` is a plain grouping key, **not** a foreign key (so run deletion never breaks).
+- Two tables are app-singleton (no `workspace_id` — that migration was reverted). In `buyer_outreach_sends`, BOTH `buyer_match_id` and `company_id` are plain text references, **not** foreign keys: a cascade FK would erase the send audit trail when its search run is deleted, and a RESTRICT FK would block deleting a run that has ever emailed. The send log is the durable audit record and must survive run deletion.
 - Build gate: `npm run build` (tsc) must pass. Test gate: `npm test` must pass. There is no separate lint script.
 - Verification before claiming any task done: run the command and read its actual output.
 
@@ -620,7 +620,7 @@ create table if not exists public.email_templates (
 
 create table if not exists public.buyer_outreach_sends (
   id text primary key,
-  buyer_match_id text not null references public.buyer_matches(id) on delete cascade,
+  buyer_match_id text not null,
   company_id text not null,
   recipient_email text not null,
   subject text not null,

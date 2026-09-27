@@ -95,8 +95,8 @@ gallery is YAGNI, per-email tweaks cover variation). Seeded by the migration.
 | column | notes |
 |---|---|
 | `id` | text primary key |
-| `buyer_match_id` | FK → `buyer_matches(id)`, on delete cascade |
-| `company_id` | FK → `buyer_companies(id)`, so contact history survives run deletion |
+| `buyer_match_id` | plain text reference to the originating match — deliberately NOT a FK (a cascade FK would erase audit history on run deletion; a restrict FK would block deleting a run that has emailed) |
+| `company_id` | plain text reference to the company — NOT a FK; the send log is the audit trail and must survive deletion of the originating search run |
 | `recipient_email` | resolved server-side from `buyer_contacts`, never from client text |
 | `subject`, `body` | exact text sent |
 | `status` | `SENT` \| `FAILED` |
