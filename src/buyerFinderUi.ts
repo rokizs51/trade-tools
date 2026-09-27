@@ -1,4 +1,6 @@
 import { authenticatedFetch } from "./auth.js";
+import { renderEmailTemplate, type OutreachSummary, type TemplateValues } from "./domain/outreach/emailTemplate.js";
+import { fetchOutreachSummaries, fetchOutreachTemplate, type OutreachTemplateResponse } from "./outreachApi.js";
 
 export type BuyerSubview = "calculator" | "saved" | "archived";
 
@@ -107,6 +109,7 @@ type BuyerSource = {
 };
 
 type BuyerContact = {
+  id: string;
   type: string;
   value: string;
   label?: string;
@@ -158,6 +161,9 @@ export class BuyerFinderUi {
   private pollTimer: number | undefined;
   private hydrateFormOnNextStatus = false;
   private formLocked = false;
+  private outreach: OutreachTemplateResponse | undefined;
+  private summaries: Record<string, OutreachSummary> = {};
+  private activeSendId: string | undefined;
 
   constructor(private readonly requestWorkspace: (subview: BuyerSubview) => void) {
     this.form.addEventListener("submit", (event) => void this.startSearch(event));
@@ -609,18 +615,185 @@ export class BuyerFinderUi {
     list.replaceChildren();
     setText("buyer-saved-error", "");
     try {
-      const searches = await apiRequest<SearchListItem[]>("/api/buyer-searches");
+      const [searches, outreach, summaries] = await Promise.all([
+        apiRequest<SearchListItem[]>("/api/buyer-searches"),
+        fetchOutreachTemplate().catch(() => undefined),
+        fetchOutreachSummaries().catch(() => ({} as Record<string, OutreachSummary>)),
+      ]);
+      this.outreach = outreach;
+      this.summaries = summaries;
+      this.activeSendId = undefined;
+
       const completed = searches.filter((search) => TERMINAL_STATUSES.has(search.status));
       const responses = await Promise.all(completed.map((search) =>
         apiRequest<ResultsResponse>(`/api/buyer-searches/${encodeURIComponent(search.id)}/results`),
       ));
       const approved = responses.flatMap((response) => response.results).filter((result) => result.reviewStatus === "APPROVED");
       getElement("buyer-saved-empty").hidden = approved.length > 0;
-      for (const result of approved) list.appendChild(createSavedBuyerCard(result));
+      for (const result of approved) {
+        list.appendChild(this.createSavedBuyerCard(result));
+      }
     } catch (error) {
       getElement("buyer-saved-empty").hidden = true;
       setText("buyer-saved-error", getErrorMessage(error));
     }
+  }
+
+  private createSavedBuyerCard(result: BuyerResult): HTMLElement {
+    const card = createElement("article", "buyer-saved-card");
+    card.dataset.buyerMatchId = result.id;
+
+    const heading = createElement("div", "buyer-result-card-top");
+    const titleBlock = createElement("div");
+    titleBlock.append(createElement("h3", "", result.company.name));
+    heading.append(titleBlock, createConfidenceBadge(result.confidence));
+
+    const summary = this.summaries[result.company.id];
+    const badge = createElement(
+      "span",
+      summary && summary.sentCount > 0 ? "contacted-badge is-contacted" : "contacted-badge",
+      summary && summary.sentCount > 0 ? `Contacted ${formatDate(summary.lastSentAt ?? "")} (${summary.sentCount})` : "Not contacted",
+    );
+
+    card.append(
+      heading,
+      badge,
+      createElement("p", "buyer-result-location", [result.company.city, result.company.countryName].filter(Boolean).join(", ")),
+      createElement("p", "buyer-result-role", `${formatBuyerType(result.buyerType)} · ${result.commodity}`),
+      createElement("p", "", result.commodityRelationship),
+    );
+
+    const links = createElement("div", "buyer-saved-links");
+    if (result.company.websiteUrl) links.append(createSafeLink(result.company.websiteUrl, "Website"));
+    if (result.sources[0]) links.append(createSafeLink(result.sources[0].url, "Primary evidence"));
+
+    const emailContacts = result.contacts.filter((contact) => contact.type === "EMAIL");
+    const sendButton = createElement("button", "text-button buyer-send-button", "Send email");
+    sendButton.type = "button";
+    if (emailContacts.length === 0) {
+      sendButton.disabled = true;
+      sendButton.title = "No email contact was found for this company.";
+    } else if (!this.outreach?.mailConfigured) {
+      sendButton.disabled = true;
+      sendButton.title = "Mail is not configured on the server.";
+    } else {
+      sendButton.addEventListener("click", () => this.openSendPanel(card, result));
+    }
+    links.append(sendButton);
+    card.append(links);
+    return card;
+  }
+
+  private templateValues(result: BuyerResult, contact: BuyerContact | undefined): TemplateValues {
+    const ourCompany = this.outreach?.sender.ourCompany ?? "";
+    return {
+      company: result.company.name,
+      country: result.company.countryName,
+      commodity: result.commodity,
+      buyerType: formatBuyerType(result.buyerType),
+      ...(result.company.city ? { city: result.company.city } : {}),
+      ...(contact?.label ? { contactName: contact.label } : {}),
+      ...(ourCompany ? { ourCompany } : {}),
+    };
+  }
+
+  private openSendPanel(card: HTMLElement, result: BuyerResult): void {
+    this.closeSendPanel();
+    const template = this.outreach?.template;
+    if (!template) return;
+
+    const emailContacts = result.contacts.filter((contact) => contact.type === "EMAIL");
+    const panel = createElement("div", "buyer-send-panel");
+
+    const recipient = document.createElement("select");
+    recipient.className = "buyer-send-recipient";
+    for (const contact of emailContacts) {
+      const option = document.createElement("option");
+      option.value = contact.id;
+      option.textContent = contact.label ? `${contact.label} — ${contact.value}` : contact.value;
+      recipient.appendChild(option);
+    }
+
+    const subject = document.createElement("input");
+    subject.type = "text";
+    subject.className = "buyer-send-subject";
+    const body = document.createElement("textarea");
+    body.rows = 10;
+    body.className = "buyer-send-body";
+
+    const applyTemplate = (): void => {
+      const selected = emailContacts.find((contact) => contact.id === recipient.value) ?? emailContacts[0];
+      const rendered = renderEmailTemplate(template, this.templateValues(result, selected));
+      subject.value = rendered.subject;
+      body.value = rendered.body;
+    };
+    recipient.addEventListener("change", applyTemplate);
+    applyTemplate();
+
+    const statusLine = createElement("p", "buyer-send-status");
+    const sendButton = createElement("button", "text-button", "Send");
+    sendButton.type = "button";
+    const cancelButton = createElement("button", "text-button secondary-button", "Cancel");
+    cancelButton.type = "button";
+    cancelButton.addEventListener("click", () => this.closeSendPanel());
+
+    const actions = createElement("div", "buyer-send-actions");
+    actions.append(sendButton, cancelButton);
+
+    panel.append(
+      labelField("To", recipient),
+      labelField("Subject", subject),
+      labelField("Message", body),
+      actions,
+      statusLine,
+    );
+
+    sendButton.addEventListener("click", () => void this.submitSend(sendButton, statusLine, card, result));
+    card.appendChild(panel);
+    this.activeSendId = result.id;
+  }
+
+  private async submitSend(
+    button: HTMLButtonElement,
+    statusLine: HTMLElement,
+    card: HTMLElement,
+    result: BuyerResult,
+  ): Promise<void> {
+    const recipient = card.querySelector<HTMLSelectElement>(".buyer-send-recipient");
+    const subject = card.querySelector<HTMLInputElement>(".buyer-send-subject");
+    const body = card.querySelector<HTMLTextAreaElement>(".buyer-send-body");
+    if (!recipient || !subject || !body || !recipient.value) return;
+
+    button.disabled = true;
+    statusLine.textContent = "Sending…";
+    try {
+      await apiRequest("/api/buyer-outreach/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ buyerMatchId: result.id, contactId: recipient.value, subject: subject.value, body: body.value }),
+      });
+      const previous = this.summaries[result.company.id];
+      const summary: OutreachSummary = {
+        sentCount: (previous?.sentCount ?? 0) + 1,
+        lastSentAt: new Date().toISOString(),
+      };
+      this.summaries[result.company.id] = summary;
+      const badge = card.querySelector<HTMLElement>(".contacted-badge");
+      if (badge) {
+        badge.textContent = `Contacted ${formatDate(summary.lastSentAt ?? "")} (${summary.sentCount})`;
+        badge.classList.add("is-contacted");
+      }
+      statusLine.textContent = "Sent.";
+      this.closeSendPanel();
+    } catch (error) {
+      statusLine.textContent = getErrorMessage(error);
+      button.disabled = false;
+    }
+  }
+
+  private closeSendPanel(): void {
+    this.activeSendId = undefined;
+    for (const panel of document.querySelectorAll(".buyer-send-panel")) panel.remove();
   }
 
   private setSubmitting(submitting: boolean): void {
@@ -756,21 +929,10 @@ function createHistoryRow(search: SearchListItem): HTMLTableRowElement {
   return row;
 }
 
-function createSavedBuyerCard(result: BuyerResult): HTMLElement {
-  const card = createElement("article", "buyer-saved-card");
-  const heading = createElement("div", "buyer-result-card-top");
-  heading.append(createElement("h3", "", result.company.name), createConfidenceBadge(result.confidence));
-  card.append(
-    heading,
-    createElement("p", "buyer-result-location", [result.company.city, result.company.countryName].filter(Boolean).join(", ")),
-    createElement("p", "buyer-result-role", `${formatBuyerType(result.buyerType)} · ${result.commodity}`),
-    createElement("p", "", result.commodityRelationship),
-  );
-  const links = createElement("div", "buyer-saved-links");
-  if (result.company.websiteUrl) links.append(createSafeLink(result.company.websiteUrl, "Website"));
-  if (result.sources[0]) links.append(createSafeLink(result.sources[0].url, "Primary evidence"));
-  card.append(links);
-  return card;
+function labelField(caption: string, control: HTMLElement): HTMLElement {
+  const label = createElement("label", "buyer-send-field");
+  label.append(createElement("span", "", caption), control);
+  return label;
 }
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
